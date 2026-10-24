@@ -1,4 +1,4 @@
-# <img src="app/assets/branding/plume.png" alt="Plume logo" width="36" height="36" align="center" style="vertical-align: middle;"> Plume
+# <img src="app/assets/branding/plume.png" alt="Plume logo" width="36" height="36" align="absmiddle" style="vertical-align: middle;"> Plume
 
 A fast mail client for the Linux desktop, built with Flutter and Material 3 Expressive. It supports Gmail and any IMAP/SMTP server, multiple accounts, real-time notifications and a system tray icon.
 
