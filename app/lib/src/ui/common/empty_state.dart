@@ -1,18 +1,20 @@
 import 'package:flutter/material.dart';
 import 'package:plume_design/plume_design.dart';
 
-/// A calm, centred empty state with an expressive shape behind an icon.
+/// A calm, centred empty state with an icon or a custom illustration.
 class EmptyState extends StatelessWidget {
   const EmptyState({
     super.key,
-    required this.icon,
+    this.icon,
+    this.illustration,
     required this.title,
     this.message,
     this.shape,
     this.action,
-  });
+  }) : assert((icon == null) != (illustration == null));
 
-  final IconData icon;
+  final IconData? icon;
+  final Widget? illustration;
   final String title;
   final String? message;
   final RadialShape? shape;
@@ -38,7 +40,7 @@ class EmptyState extends StatelessWidget {
             children: [
               SizedBox.square(
                 dimension: 112,
-                child: Material(
+                child: illustration ?? Material(
                   color: scheme.secondaryContainer,
                   shape: RadialShapeBorder(shape ?? Shapes.cookie9),
                   child: Icon(icon, size: 44, color: scheme.onSecondaryContainer),

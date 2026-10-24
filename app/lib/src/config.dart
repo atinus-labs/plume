@@ -7,6 +7,7 @@ import 'package:path/path.dart' as p;
 abstract final class AppConfig {
   static const appId = 'org.atinus.plume';
   static const appName = 'Plume';
+  static const iconAsset = 'assets/branding/plume.png';
 
   /// Development mode with a generated demo account instead of real mail.
   static const demo = bool.fromEnvironment('PLUME_DEMO');

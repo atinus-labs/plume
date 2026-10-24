@@ -10,6 +10,7 @@ import '../../state/mail.dart';
 import '../../state/navigation.dart';
 import '../actions.dart';
 import '../common/empty_state.dart';
+import '../common/logo.dart';
 import '../compose/compose_host.dart';
 import 'message_card.dart';
 
@@ -49,8 +50,7 @@ class _NothingOpen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final unread = ref.watch(unreadCountProvider(ref.watch(viewProvider).toFilter())).value ?? 0;
     return EmptyState(
-      icon: Symbols.mail_rounded,
-      shape: Shapes.cookie12,
+      illustration: const PlumeLogo(size: 112),
       title: unread > 0 ? '$unread unread' : 'No conversation selected',
       message: 'Pick a conversation from the list. Use J and K to move between them.',
     );

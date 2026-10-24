@@ -583,9 +583,13 @@ PlumeMainWindow* plume_main_window_new(GtkApplication* application,
   GtkWindow* window = GTK_WINDOW(gtk_application_window_new(application));
   self->window = GTK_WINDOW(g_object_ref(window));
   gtk_window_set_title(window, kWindowTitle);
-  // Themed icon from the installed hicolor theme (X11 taskbars use it; on
-  // Wayland the compositor reads it from the .desktop file).
+  // Wayland resolves the installed desktop icon by name. Also set the bundled
+  // artwork explicitly for X11, including uninstalled development builds.
   gtk_window_set_icon_name(window, "org.atinus.plume");
+  g_autofree gchar* icon_path = g_build_filename(
+      fl_dart_project_get_assets_path(project), "assets", "branding", "plume.png",
+      nullptr);
+  gtk_window_set_icon_from_file(window, icon_path, nullptr);
   gtk_window_set_default_size(window, kDefaultWidth, kDefaultHeight);
 
   // Hide the native title bar so Flutter can draw its own title area. An

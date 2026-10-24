@@ -1,11 +1,9 @@
-import 'dart:math' as math;
-
 import 'package:flutter/material.dart';
-import 'package:material_symbols_icons/symbols.dart';
-import 'package:plume_design/plume_design.dart';
 
-/// Plume's mark: an envelope on an expressive "cookie" shape, in the theme's
-/// primary colours. With [animate], the shape slowly morphs and turns.
+import '../../config.dart';
+
+/// Plume's original artwork, preserving its colours and transparent background.
+/// With [animate], the mark gently floats unless reduced motion is enabled.
 class PlumeLogo extends StatefulWidget {
   const PlumeLogo({super.key, this.size = 64, this.animate = false});
 
@@ -17,12 +15,26 @@ class PlumeLogo extends StatefulWidget {
 }
 
 class _PlumeLogoState extends State<PlumeLogo> with SingleTickerProviderStateMixin {
-  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(seconds: 14));
+  late final AnimationController _c = AnimationController(vsync: this, duration: const Duration(seconds: 3));
 
   @override
-  void initState() {
-    super.initState();
-    if (widget.animate) _c.repeat();
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    _updateAnimation();
+  }
+
+  @override
+  void didUpdateWidget(covariant PlumeLogo oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    _updateAnimation();
+  }
+
+  void _updateAnimation() {
+    if (widget.animate && !MediaQuery.disableAnimationsOf(context)) {
+      if (!_c.isAnimating) _c.repeat(reverse: true);
+    } else {
+      _c.reset();
+    }
   }
 
   @override
@@ -32,22 +44,20 @@ class _PlumeLogoState extends State<PlumeLogo> with SingleTickerProviderStateMix
   }
 
   @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    return AnimatedBuilder(
-      animation: _c,
-      builder: (context, _) {
-        final v = _c.value;
-        final morph = (math.sin(v * 2 * math.pi) + 1) / 2;
-        return SizedBox.square(
-          dimension: widget.size,
-          child: Material(
-            color: scheme.primary,
-            shape: RadialShapeBorder(RadialShape.lerp(Shapes.cookie12, Shapes.softBurst, morph * 0.6), rotation: v * 2 * math.pi),
-            child: Icon(Symbols.mail_rounded, fill: 1, size: widget.size * 0.46, color: scheme.onPrimary),
+  Widget build(BuildContext context) => SizedBox.square(
+        dimension: widget.size,
+        child: AnimatedBuilder(
+          animation: _c,
+          builder: (context, child) => Transform.translate(
+            offset: Offset(0, -widget.size * 0.025 * Curves.easeInOut.transform(_c.value)),
+            child: child,
           ),
-        );
-      },
-    );
-  }
+          child: Image.asset(
+            AppConfig.iconAsset,
+            fit: BoxFit.contain,
+            filterQuality: FilterQuality.high,
+            semanticLabel: AppConfig.appName,
+          ),
+        ),
+      );
 }

@@ -4,7 +4,6 @@ import 'dart:typed_data';
 import 'dart:ui';
 
 import 'package:logging/logging.dart';
-import 'package:plume_design/plume_design.dart';
 import 'package:plume_linux/plume_linux.dart';
 
 import '../../config.dart';
@@ -120,7 +119,7 @@ final class LinuxDesktop implements DesktopIntegration {
       _trayRegistered = await _tray.start(TrayConfig(
         id: AppConfig.appId,
         title: AppConfig.appName,
-        iconName: AppConfig.appId,
+        // Use the supplied pixmaps so hosts also display the unread badge.
         iconPixmaps: await _trayPixmaps(0),
         tooltipTitle: AppConfig.appName,
         menu: _menu,
@@ -218,7 +217,7 @@ final class LinuxDesktop implements DesktopIntegration {
     _unread = count;
     if (!_trayRegistered) return;
     try {
-      await _tray.setIcon(await _trayPixmaps(count), iconName: AppConfig.appId);
+      await _tray.setIcon(await _trayPixmaps(count));
       await _tray.setTooltip(AppConfig.appName, count == 0 ? 'No unread mail' : '$count unread');
     } catch (e) {
       _log.fine('Tray update failed: $e');
@@ -226,15 +225,12 @@ final class LinuxDesktop implements DesktopIntegration {
   }
 
   static Future<List<TrayPixmap>> _trayPixmaps(int unread) async {
-    final scheme = PlumeTheme.build(brightness: Brightness.light).colorScheme;
     return [
       for (final size in const [22, 32, 48, 64])
         TrayPixmap.fromRgba(
           await renderTrayIconRgba(
             size: size,
             unread: unread,
-            color: scheme.primary,
-            onColor: scheme.onPrimary,
             badge: const Color(0xFFE5484D),
           ),
           size,

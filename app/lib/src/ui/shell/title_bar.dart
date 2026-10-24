@@ -4,8 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_symbols_icons/symbols.dart';
 
+import '../../config.dart';
 import '../../state/services.dart';
 import '../../state/settings.dart';
+import '../common/logo.dart';
 import 'nav_rail.dart';
 
 /// The app-drawn title bar for floating window managers (GNOME, KDE, ...).
@@ -26,7 +28,25 @@ class WindowTitleBar extends ConsumerWidget {
               behavior: HitTestBehavior.opaque,
               onPanStart: (_) => unawaited(desktop.startWindowMove()),
               onDoubleTap: () => unawaited(desktop.toggleMaximize()),
-              child: const SizedBox.expand(),
+              child: SizedBox.expand(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 16),
+                  child: Row(
+                    children: [
+                      const ExcludeSemantics(child: PlumeLogo(size: 28)),
+                      const SizedBox(width: 8),
+                      Flexible(
+                        child: Text(
+                          AppConfig.appName,
+                          style: Theme.of(context).textTheme.labelLarge?.copyWith(color: scheme.onSurfaceVariant),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
             ),
           ),
           _WindowButton(icon: Symbols.remove_rounded, tooltip: 'Minimise', onPressed: desktop.minimize, color: scheme.onSurfaceVariant),

@@ -101,7 +101,16 @@ Future<void> _openServerForm(WidgetTester t, WidgetRef c) async {
 Step _type(String field, String text) => (t, c) => t.enterText(find.widgetWithText(TextField, field), text);
 
 final _scenarios = <String, List<Step>>{
+  'welcome': [],
   'inbox': [],
+  'settings_branding': [
+    (t, c) async => t.tap(find.text('Settings')),
+    (t, c) async => t.scrollUntilVisible(
+      find.text('Version 0.1.0 · org.atinus.plume'),
+      500,
+      scrollable: find.byType(Scrollable).first,
+    ),
+  ],
   'reader': [
     (t, c) async => openThread(c, (c.read(visibleThreadsProvider).value!).first),
   ],
@@ -155,7 +164,10 @@ void main() {
 
         final services = (await tester.runAsync(_services))!;
         final boundary = GlobalKey();
-        final container = ProviderContainer(overrides: [servicesProvider.overrideWithValue(services)]);
+        final container = ProviderContainer(overrides: [
+          servicesProvider.overrideWithValue(services),
+          if (entry.key == 'welcome') accountsProvider.overrideWith((ref) => Stream.value(const [])),
+        ]);
         late WidgetRef ref;
         await tester.pumpWidget(UncontrolledProviderScope(
           container: container,

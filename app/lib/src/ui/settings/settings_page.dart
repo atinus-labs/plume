@@ -13,6 +13,7 @@ import '../../state/mail.dart';
 import '../../state/services.dart';
 import '../../state/settings.dart';
 import '../actions.dart';
+import '../common/logo.dart';
 import '../onboarding/add_account.dart';
 import '../onboarding/server_account_form.dart';
 import '../shell/title_bar.dart';
@@ -196,7 +197,7 @@ class SettingsPage extends ConsumerWidget {
                             onTap: () => showDialog<void>(context: context, builder: (_) => const _ShortcutsDialog()),
                           ),
                           _Row(
-                            icon: Symbols.info_rounded,
+                            leading: const ExcludeSemantics(child: PlumeLogo(size: 32)),
                             title: AppConfig.appName,
                             subtitle: 'Version 0.1.0 · ${AppConfig.appId}',
                           ),
@@ -249,9 +250,11 @@ class _Section extends StatelessWidget {
 }
 
 class _Row extends StatelessWidget {
-  const _Row({required this.icon, required this.title, this.subtitle, this.trailing, this.onTap, this.below});
+  const _Row({this.icon, this.leading, required this.title, this.subtitle, this.trailing, this.onTap, this.below})
+      : assert((icon == null) != (leading == null));
 
-  final IconData icon;
+  final IconData? icon;
+  final Widget? leading;
   final String title;
   final String? subtitle;
   final Widget? trailing;
@@ -271,7 +274,7 @@ class _Row extends StatelessWidget {
           children: [
             Row(
               children: [
-                Icon(icon, color: scheme.onSurfaceVariant),
+                leading ?? Icon(icon, color: scheme.onSurfaceVariant),
                 const SizedBox(width: 18),
                 Expanded(
                   child: Column(
