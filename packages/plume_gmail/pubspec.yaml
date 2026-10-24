@@ -1,0 +1,20 @@
+name: plume_gmail
+description: Gmail provider for Plume (Gmail REST API + IMAP IDLE push).
+publish_to: none
+version: 0.1.0
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  async: ^2.13.1
+  crypto: ^3.0.7
+  http: ^1.6.0
+  logging: ^1.3.0
+  plume_core:
+    path: ../plume_core
+  plume_mime:
+    path: ../plume_mime
+dev_dependencies:
+  test: ^1.31.1

@@ -1,0 +1,18 @@
+name: plume_workspace
+publish_to: none
+
+environment:
+  sdk: ^3.13.0
+
+workspace:
+  - app
+  - packages/plume_core
+  - packages/plume_design
+  - packages/plume_gmail
+  - packages/plume_imap
+  - packages/plume_linux
+  - packages/plume_mime
+  - packages/plume_store
+
+dev_dependencies:
+  lints: ^6.0.0

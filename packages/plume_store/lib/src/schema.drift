@@ -1,0 +1,202 @@
+-- Plume local mail store, schema version 2.
+--
+-- Dates are epoch milliseconds. Address lists are compact JSON arrays of
+-- objects with e (email) and n (name) keys, NULL when empty. Everything that
+-- belongs to an account cascades from accounts. The threads and
+-- thread_mailboxes tables are derived from messages and message_mailboxes by
+-- DriftMailStore and are never written directly. When changing anything here,
+-- bump schemaVersion, add a migration step and run
+-- dart run drift_dev make-migrations
+
+CREATE TABLE accounts (
+  id TEXT NOT NULL PRIMARY KEY,
+  provider TEXT NOT NULL,
+  email TEXT NOT NULL,
+  display_name TEXT NOT NULL,
+  avatar_url TEXT,
+  color INTEGER NOT NULL,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'ok',
+  signature TEXT,
+  -- Provider connection settings as a JSON object (v2).
+  provider_config TEXT
+) AS AccountRow;
+
+CREATE TABLE mailboxes (
+  account_id TEXT NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
+  id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  role TEXT,
+  category TEXT,
+  kind TEXT NOT NULL DEFAULT 'user',
+  parent_id TEXT,
+  color INTEGER,
+  unread_threads INTEGER NOT NULL DEFAULT 0,
+  total_threads INTEGER NOT NULL DEFAULT 0,
+  sort_order INTEGER NOT NULL DEFAULT 0,
+  hidden BOOLEAN NOT NULL DEFAULT FALSE,
+  PRIMARY KEY (account_id, id)
+) WITHOUT ROWID AS MailboxRow;
+
+-- Message metadata. row_id is an explicit INTEGER PRIMARY KEY so that it is
+-- stable across VACUUM: it is the rowid of the message's full-text entry.
+-- (account_id, id) is the logical key.
+CREATE TABLE messages (
+  row_id INTEGER NOT NULL PRIMARY KEY,
+  account_id TEXT NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
+  id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  subject TEXT NOT NULL DEFAULT '',
+  from_addr TEXT,
+  to_addrs TEXT,
+  cc_addrs TEXT,
+  bcc_addrs TEXT,
+  reply_to_addrs TEXT,
+  date INTEGER NOT NULL,
+  snippet TEXT NOT NULL DEFAULT '',
+  is_read BOOLEAN NOT NULL DEFAULT TRUE,
+  is_flagged BOOLEAN NOT NULL DEFAULT FALSE,
+  is_draft BOOLEAN NOT NULL DEFAULT FALSE,
+  has_attachments BOOLEAN NOT NULL DEFAULT FALSE,
+  attachments TEXT,
+  message_id_header TEXT,
+  in_reply_to TEXT,
+  refs TEXT,
+  list_unsubscribe TEXT,
+  size INTEGER NOT NULL DEFAULT 0,
+  UNIQUE (account_id, id)
+) AS MessageRow;
+
+-- Thread expansion, thread recomputation and oldest-first reading order.
+CREATE INDEX messages_by_thread ON messages (account_id, thread_id, date);
+
+CREATE TABLE message_mailboxes (
+  account_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  mailbox_id TEXT NOT NULL,
+  PRIMARY KEY (account_id, message_id, mailbox_id),
+  FOREIGN KEY (account_id, message_id) REFERENCES messages (account_id, id) ON DELETE CASCADE
+) WITHOUT ROWID AS MessageMailboxRow;
+
+CREATE INDEX message_mailboxes_by_mailbox ON message_mailboxes (account_id, mailbox_id);
+
+-- Derived conversation rows. active_count counts messages outside trash and
+-- junk (used by the flagged and all-mail views); mailbox_ids is the JSON
+-- union of the messages' mailboxes.
+CREATE TABLE threads (
+  account_id TEXT NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
+  id TEXT NOT NULL,
+  subject TEXT NOT NULL,
+  snippet TEXT NOT NULL,
+  last_date INTEGER NOT NULL,
+  message_count INTEGER NOT NULL,
+  unread_count INTEGER NOT NULL,
+  flagged BOOLEAN NOT NULL,
+  has_attachments BOOLEAN NOT NULL,
+  draft_count INTEGER NOT NULL,
+  active_count INTEGER NOT NULL,
+  participants TEXT NOT NULL,
+  mailbox_ids TEXT NOT NULL,
+  PRIMARY KEY (account_id, id)
+) WITHOUT ROWID AS ThreadRow;
+
+-- All mail (threads with at least one message outside trash/junk).
+CREATE INDEX threads_active ON threads (account_id, last_date DESC, id) WHERE active_count > 0;
+-- Flagged view.
+CREATE INDEX threads_flagged ON threads (account_id, last_date DESC, id) WHERE flagged = 1 AND active_count > 0;
+
+-- Derived: one row per (thread, mailbox of any of its messages), carrying the
+-- thread's sort key and unread state so that list and count queries are
+-- index-only.
+CREATE TABLE thread_mailboxes (
+  account_id TEXT NOT NULL,
+  thread_id TEXT NOT NULL,
+  mailbox_id TEXT NOT NULL,
+  last_date INTEGER NOT NULL,
+  unread BOOLEAN NOT NULL,
+  PRIMARY KEY (account_id, thread_id, mailbox_id),
+  FOREIGN KEY (account_id, thread_id) REFERENCES threads (account_id, id) ON DELETE CASCADE
+) WITHOUT ROWID AS ThreadMailboxRow;
+
+CREATE INDEX thread_mailboxes_list ON thread_mailboxes (account_id, mailbox_id, last_date DESC, thread_id);
+CREATE INDEX thread_mailboxes_unread ON thread_mailboxes (account_id, mailbox_id) WHERE unread = 1;
+
+-- Decoded bodies, kept apart so that message rows stay small.
+CREATE TABLE bodies (
+  account_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  html TEXT,
+  plain TEXT,
+  PRIMARY KEY (account_id, message_id),
+  FOREIGN KEY (account_id, message_id) REFERENCES messages (account_id, id) ON DELETE CASCADE
+) AS BodyRow;
+
+-- Inline resources (cid: images) delivered with a body.
+CREATE TABLE body_parts (
+  account_id TEXT NOT NULL,
+  message_id TEXT NOT NULL,
+  content_id TEXT NOT NULL,
+  data BLOB NOT NULL,
+  PRIMARY KEY (account_id, message_id, content_id),
+  FOREIGN KEY (account_id, message_id) REFERENCES bodies (account_id, message_id) ON DELETE CASCADE
+) AS BodyPartRow;
+
+-- Recipient suggestions. email is lowercased.
+CREATE TABLE contacts (
+  email TEXT NOT NULL PRIMARY KEY,
+  name TEXT,
+  use_count INTEGER NOT NULL DEFAULT 0,
+  last_used INTEGER NOT NULL DEFAULT 0
+) WITHOUT ROWID AS ContactRow;
+
+CREATE INDEX contacts_rank ON contacts (use_count DESC, last_used DESC);
+
+CREATE TABLE sync_state (
+  account_id TEXT NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
+  "key" TEXT NOT NULL,
+  value TEXT NOT NULL,
+  PRIMARY KEY (account_id, "key")
+) WITHOUT ROWID AS SyncStateRow;
+
+CREATE TABLE pending_ops (
+  id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  account_id TEXT NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
+  payload TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT,
+  not_before INTEGER
+) AS PendingOpRow;
+
+CREATE INDEX pending_ops_by_account ON pending_ops (account_id, id);
+
+CREATE TABLE outbox (
+  id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  account_id TEXT NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
+  payload TEXT NOT NULL,
+  send_at INTEGER NOT NULL,
+  state TEXT NOT NULL,
+  attempts INTEGER NOT NULL DEFAULT 0,
+  last_error TEXT
+) AS OutboxRow;
+
+CREATE INDEX outbox_by_account ON outbox (account_id);
+
+CREATE TABLE settings (
+  "key" TEXT NOT NULL PRIMARY KEY,
+  value TEXT NOT NULL
+) WITHOUT ROWID AS SettingRow;
+
+-- Full-text index, one row per message (rowid = messages.row_id). Contentless
+-- so that body text is not stored twice; rows are rebuilt from messages and
+-- bodies whenever their indexed text changes.
+CREATE VIRTUAL TABLE message_fts USING fts5(
+  subject,
+  sender,
+  recipients,
+  snippet,
+  body,
+  content = '',
+  contentless_delete = 1,
+  tokenize = 'unicode61 remove_diacritics 2',
+  prefix = '2 3'
+);

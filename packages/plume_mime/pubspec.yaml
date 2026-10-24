@@ -1,0 +1,15 @@
+name: plume_mime
+description: MIME parsing and building for Plume (RFC 5322, 2045-2047, 2231).
+publish_to: none
+version: 0.1.0
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+
+dependencies:
+  plume_core:
+    path: ../plume_core
+
+dev_dependencies:
+  test: ^1.31.1

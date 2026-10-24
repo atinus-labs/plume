@@ -1,0 +1,11 @@
+tags:
+  # Tests against real servers and DNS. Skipped by default so `dart test`
+  # stays hermetic; run them with `dart test --run-skipped -t live`.
+  live:
+    skip: 'Uses the network; run with --run-skipped -t live'
+  # Tests against a real Dovecot in a container started by
+  # tool/integration.sh, which runs them with
+  # `dart test --run-skipped -t integration`.
+  integration:
+    skip: 'Needs a Dovecot server; run tool/integration.sh'
+    timeout: 3x

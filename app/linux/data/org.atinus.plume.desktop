@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Plume
+GenericName=Mail
+Comment=A fast, beautiful mail client
+Exec=plume
+Icon=org.atinus.plume
+Terminal=false
+Categories=Network;Email;
+Keywords=mail;email;gmail;inbox;
+StartupWMClass=org.atinus.plume
+StartupNotify=true
+X-GNOME-UsesNotifications=true

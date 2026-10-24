@@ -1,0 +1,24 @@
+name: plume_design
+description: Plume's Material 3 Expressive design system.
+publish_to: none
+version: 0.1.0
+resolution: workspace
+
+environment:
+  sdk: ^3.13.0
+  flutter: ">=3.47.0"
+
+dependencies:
+  flutter:
+    sdk: flutter
+  material_color_utilities: ^0.13.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  fonts:
+    - family: Google Sans Flex
+      fonts:
+        - asset: fonts/GoogleSansFlex.ttf

@@ -1,0 +1,4 @@
+tags:
+  benchmark:
+    # Large dataset; run alone with `dart test -t benchmark`, skip with `-x benchmark`.
+    timeout: 5x
