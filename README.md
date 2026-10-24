@@ -2,6 +2,12 @@
 
 A fast mail client for the Linux desktop, built with Flutter and Material 3 Expressive. It supports Gmail and any IMAP/SMTP server, multiple accounts, real-time notifications and a system tray icon.
 
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="assets/screenshots/showcase_dark.png">
+  <source media="(prefers-color-scheme: light)" srcset="assets/screenshots/showcase_light.png">
+  <img alt="Plume Mail Client" src="assets/screenshots/showcase_dark.png" width="100%" style="border-radius: 16px;">
+</picture>
+
 > [!NOTE]
 > Plume is vibe-coded with AI assistance. Expect rapid iteration and occasional rough edges. Feedback, bug reports, and contributions are welcome.
 

@@ -131,6 +131,25 @@ final _scenarios = <String, List<Step>>{
     (t, c) async => openThread(c, (c.read(visibleThreadsProvider).value!).first),
     (t, c) async => c.read(composeProvider.notifier).newMessage(),
   ],
+  'showcase': [
+    (t, c) async => openThread(c, (c.read(visibleThreadsProvider).value!).first),
+    (t, c) async {
+      c.read(composeProvider.notifier).reopen(OutgoingMessage(
+        accountId: 'demo',
+        from: const Address('alex.rivera@example.com', 'Alex Rivera'),
+        to: const [Address('arjun@northwind.dev', 'Arjun Mehta')],
+        subject: 'Re: Q4 infrastructure budget',
+        textBody: "Thanks Arjun. The reserved instances breakdown looks solid. Let's move the batch jobs to spot next.",
+        attachments: [
+          OutgoingAttachment(
+            filename: 'Q4-forecast.xlsx',
+            mimeType: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            bytes: Uint8List(48213),
+          ),
+        ],
+      ));
+    },
+  ],
   'add_account': [_openAddAccount],
   'server_form_gmail': [
     _openServerForm,
@@ -173,10 +192,23 @@ void main() {
           container: container,
           child: RepaintBoundary(
             key: boundary,
-            child: Consumer(builder: (context, r, child) {
-              ref = r;
-              return child!;
-            }, child: const PlumeApp()),
+            child: DecoratedBox(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(24),
+                border: Border.all(
+                  color: brightness == Brightness.dark ? const Color(0x33FFFFFF) : const Color(0x1F000000),
+                  width: 1,
+                ),
+              ),
+              position: DecorationPosition.foreground,
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(24),
+                child: Consumer(builder: (context, r, child) {
+                  ref = r;
+                  return child!;
+                }, child: const PlumeApp()),
+              ),
+            ),
           ),
         ));
         Future<void> settle() async {
