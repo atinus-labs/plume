@@ -27,17 +27,44 @@ final class MailEngine {
     required this.store,
     required List<MailProviderFactory> factories,
     required this.tokenSourceFor,
-    this.foregroundInterval = const Duration(minutes: 2),
-    this.backgroundInterval = const Duration(minutes: 10),
-  }) : _factories = {for (final f in factories) f.kind: f};
+    Duration foregroundInterval = const Duration(minutes: 2),
+    Duration backgroundInterval = const Duration(minutes: 10),
+  })  : _factories = {for (final f in factories) f.kind: f},
+        _foregroundInterval = foregroundInterval,
+        _backgroundInterval = backgroundInterval;
 
   final MailStore store;
   final Map<String, MailProviderFactory> _factories;
 
   /// Supplies credentials for an account.
   final TokenSource Function(Account account) tokenSourceFor;
-  final Duration foregroundInterval;
-  final Duration backgroundInterval;
+  Duration _foregroundInterval;
+  Duration _backgroundInterval;
+
+  Duration get foregroundInterval => _foregroundInterval;
+  set foregroundInterval(Duration value) {
+    if (value == _foregroundInterval) return;
+    _foregroundInterval = value;
+    if (_foreground) {
+      for (final r in _runtimes.values) {
+        r.syncInterval = value;
+      }
+    }
+  }
+
+  Duration get backgroundInterval => _backgroundInterval;
+  set backgroundInterval(Duration value) {
+    if (value == _backgroundInterval) return;
+    _backgroundInterval = value;
+    if (!_foreground) {
+      for (final r in _runtimes.values) {
+        r.syncInterval = value;
+      }
+    }
+  }
+
+  /// Active sync interval for an account (for diagnostics and testing).
+  Duration? syncIntervalOf(String accountId) => _runtimes[accountId]?.syncInterval;
 
   final _runtimes = <String, AccountRuntime>{};
   final _restarting = <String>{};

@@ -77,6 +77,8 @@ final class AccountRuntime {
     if (done && !_disposed) _setStatus(_status.copyWith(initialSyncDone: true));
   }
 
+  Duration get syncInterval => _syncInterval;
+
   set syncInterval(Duration value) {
     if (value == _syncInterval) return;
     _syncInterval = value;

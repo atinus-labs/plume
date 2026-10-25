@@ -360,13 +360,62 @@ class _SyncButtonState extends ConsumerState<_SyncButton> with SingleTickerProvi
 }
 
 /// Inbox category chips (Gmail tabs) with an expressive selection morph.
-class _CategoryTabs extends ConsumerWidget {
+class _CategoryTabs extends ConsumerStatefulWidget {
   const _CategoryTabs({required this.view});
 
   final MailView view;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_CategoryTabs> createState() => _CategoryTabsState();
+}
+
+class _CategoryTabsState extends ConsumerState<_CategoryTabs> {
+  final _controller = ScrollController();
+  late final ValueNotifier<({double left, double right})> _factors;
+
+  @override
+  void initState() {
+    super.initState();
+    _factors = ValueNotifier((left: 0.0, right: 0.0));
+    _controller.addListener(_onScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _updateFromPosition());
+  }
+
+  @override
+  void didUpdateWidget(_CategoryTabs oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _updateFromPosition());
+  }
+
+  @override
+  void dispose() {
+    _controller.removeListener(_onScroll);
+    _controller.dispose();
+    _factors.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    _updateFromPosition();
+  }
+
+  void _updateFromPosition() {
+    if (!mounted || !_controller.hasClients) return;
+    final pos = _controller.position;
+    _updateFactors(pos.extentBefore, pos.extentAfter);
+  }
+
+  void _updateFactors(double extentBefore, double extentAfter) {
+    const fadeWidth = 24.0;
+    final left = (extentBefore / fadeWidth).clamp(0.0, 1.0);
+    final right = (extentAfter / fadeWidth).clamp(0.0, 1.0);
+    if ((left - _factors.value.left).abs() > 0.001 || (right - _factors.value.right).abs() > 0.001) {
+      _factors.value = (left: left, right: right);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
     const items = [
       (MailCategory.primary, 'Primary', Symbols.inbox_rounded),
       (MailCategory.promotions, 'Promotions', Symbols.sell_rounded),
@@ -376,32 +425,149 @@ class _CategoryTabs extends ConsumerWidget {
     ];
     return SizedBox(
       height: 40,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 8),
-        children: [
-          for (final (category, label, icon) in items)
-            Padding(
-              padding: const EdgeInsets.only(right: 6),
-              child: _TabChip(
-                label: label,
-                icon: icon,
-                selected: view.category == category,
-                unreadFilter: RoleFilter(MailboxRole.inbox,
-                    accountIds: view.accountId == null ? null : {view.accountId!}, category: category),
-                onTap: () => ref.read(viewProvider.notifier).show(view.withCategory(category)),
-              ),
-            ),
-          _TabChip(
-            label: 'Everything',
-            icon: Symbols.all_inbox_rounded,
-            selected: view.category == null,
-            onTap: () => ref.read(viewProvider.notifier).show(view.withCategory(null)),
+      child: NotificationListener<ScrollNotification>(
+        onNotification: (notification) {
+          if (notification.metrics.axis == Axis.horizontal) {
+            _updateFactors(
+              notification.metrics.extentBefore,
+              notification.metrics.extentAfter,
+            );
+          }
+          return false;
+        },
+        child: NotificationListener<ScrollMetricsNotification>(
+          onNotification: (notification) {
+            if (notification.metrics.axis == Axis.horizontal) {
+              _updateFactors(
+                notification.metrics.extentBefore,
+                notification.metrics.extentAfter,
+              );
+            }
+            return false;
+          },
+          child: LayoutBuilder(
+            builder: (context, constraints) {
+              WidgetsBinding.instance.addPostFrameCallback((_) => _updateFromPosition());
+              return ValueListenableBuilder<({double left, double right})>(
+                valueListenable: _factors,
+                builder: (context, factors, child) {
+                  return ClipPath(
+                    clipper: _CategoryTabsClipper(
+                      radius: Corners.largeIncreased,
+                      leftFactor: factors.left,
+                      rightFactor: factors.right,
+                    ),
+                    child: ShaderMask(
+                      shaderCallback: (bounds) => _createHorizontalFadeShader(bounds, factors.left, factors.right),
+                      blendMode: BlendMode.dstIn,
+                      child: child!,
+                    ),
+                  );
+                },
+                child: ListView(
+                  controller: _controller,
+                  scrollDirection: Axis.horizontal,
+                  clipBehavior: Clip.none,
+                  padding: const EdgeInsets.symmetric(horizontal: 8),
+                  children: [
+                    for (final (category, label, icon) in items)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 6),
+                        child: _TabChip(
+                          label: label,
+                          icon: icon,
+                          selected: widget.view.category == category,
+                          unreadFilter: RoleFilter(
+                            MailboxRole.inbox,
+                            accountIds: widget.view.accountId == null ? null : {widget.view.accountId!},
+                            category: category,
+                          ),
+                          onTap: () => ref.read(viewProvider.notifier).show(widget.view.withCategory(category)),
+                        ),
+                      ),
+                    _TabChip(
+                      label: 'Everything',
+                      icon: Symbols.all_inbox_rounded,
+                      selected: widget.view.category == null,
+                      onTap: () => ref.read(viewProvider.notifier).show(widget.view.withCategory(null)),
+                    ),
+                  ],
+                ),
+              );
+            },
           ),
-        ],
+        ),
       ),
     );
   }
+}
+
+Shader _createHorizontalFadeShader(Rect bounds, double leftFactor, double rightFactor) {
+  if (bounds.height <= 0 || bounds.width <= 0) {
+    return const LinearGradient(colors: [Colors.white, Colors.white]).createShader(bounds);
+  }
+  const fadeWidth = 24.0;
+  final leftFraction = (fadeWidth / bounds.width).clamp(0.0, 0.4);
+  final rightFraction = 1.0 - (fadeWidth / bounds.width).clamp(0.0, 0.4);
+
+  if (leftFactor <= 0.0 && rightFactor <= 0.0) {
+    return const LinearGradient(colors: [Colors.white, Colors.white]).createShader(bounds);
+  }
+
+  return LinearGradient(
+    begin: Alignment.centerLeft,
+    end: Alignment.centerRight,
+    colors: [
+      Colors.white.withValues(alpha: 1.0 - leftFactor),
+      Colors.white,
+      Colors.white,
+      Colors.white.withValues(alpha: 1.0 - rightFactor),
+    ],
+    stops: [
+      0.0,
+      leftFraction,
+      rightFraction,
+      1.0,
+    ],
+  ).createShader(bounds);
+}
+
+class _CategoryTabsClipper extends CustomClipper<Path> {
+  const _CategoryTabsClipper({
+    required this.radius,
+    required this.leftFactor,
+    required this.rightFactor,
+  });
+
+  final double radius;
+  final double leftFactor;
+  final double rightFactor;
+
+  @override
+  Path getClip(Size size) {
+    if (size.width <= 0 || size.height <= 0) return Path();
+
+    final leftR = Radius.circular(radius * leftFactor);
+    final rightR = Radius.circular(radius * rightFactor);
+
+    final rect = Rect.fromLTWH(0, 0, size.width, size.height);
+    return Path()
+      ..addRRect(
+        RRect.fromRectAndCorners(
+          rect,
+          topLeft: leftR,
+          bottomLeft: leftR,
+          topRight: rightR,
+          bottomRight: rightR,
+        ),
+      );
+  }
+
+  @override
+  bool shouldReclip(_CategoryTabsClipper oldClipper) =>
+      radius != oldClipper.radius ||
+      leftFactor != oldClipper.leftFactor ||
+      rightFactor != oldClipper.rightFactor;
 }
 
 class _TabChip extends ConsumerWidget {

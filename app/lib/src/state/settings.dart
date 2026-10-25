@@ -37,6 +37,8 @@ final class AppSettings {
     this.afterAction = AfterAction.nextOlder,
     this.railExpanded = true,
     this.listWidth = 420,
+    this.foregroundSyncMinutes = 2,
+    this.backgroundSyncMinutes = 10,
   });
 
   final ThemeMode themeMode;
@@ -62,6 +64,15 @@ final class AppSettings {
   final bool railExpanded;
   final double listWidth;
 
+  /// How often to check for mail when Plume is open and visible (in minutes).
+  final int foregroundSyncMinutes;
+
+  /// How often to check for mail when Plume is minimized or in the tray (in minutes).
+  final int backgroundSyncMinutes;
+
+  Duration get foregroundSyncInterval => Duration(minutes: foregroundSyncMinutes);
+  Duration get backgroundSyncInterval => Duration(minutes: backgroundSyncMinutes);
+
   AppSettings copyWith({
     ThemeMode? themeMode,
     ColorSource? colorSource,
@@ -77,6 +88,8 @@ final class AppSettings {
     AfterAction? afterAction,
     bool? railExpanded,
     double? listWidth,
+    int? foregroundSyncMinutes,
+    int? backgroundSyncMinutes,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -93,6 +106,8 @@ final class AppSettings {
         afterAction: afterAction ?? this.afterAction,
         railExpanded: railExpanded ?? this.railExpanded,
         listWidth: listWidth ?? this.listWidth,
+        foregroundSyncMinutes: foregroundSyncMinutes ?? this.foregroundSyncMinutes,
+        backgroundSyncMinutes: backgroundSyncMinutes ?? this.backgroundSyncMinutes,
       );
 
   Map<String, Object?> toJson() => {
@@ -110,6 +125,8 @@ final class AppSettings {
         'afterAction': afterAction.name,
         'railExpanded': railExpanded,
         'listWidth': listWidth,
+        'foregroundSyncMinutes': foregroundSyncMinutes,
+        'backgroundSyncMinutes': backgroundSyncMinutes,
       };
 
   static AppSettings fromJson(Map<String, Object?> j) {
@@ -131,6 +148,8 @@ final class AppSettings {
       afterAction: pick(AfterAction.values, j['afterAction'], d.afterAction),
       railExpanded: j['railExpanded'] as bool? ?? d.railExpanded,
       listWidth: (j['listWidth'] as num?)?.toDouble() ?? d.listWidth,
+      foregroundSyncMinutes: (j['foregroundSyncMinutes'] as num?)?.toInt() ?? d.foregroundSyncMinutes,
+      backgroundSyncMinutes: (j['backgroundSyncMinutes'] as num?)?.toInt() ?? d.backgroundSyncMinutes,
     );
   }
 }

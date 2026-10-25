@@ -122,4 +122,59 @@ void main() {
     await tester.pumpWidget(const SizedBox());
     await tester.pump(const Duration(milliseconds: 500));
   });
+
+  testWidgets('category tabs apply horizontal fade and rounded corner clipping on scroll', (tester) async {
+    final store = DriftMailStore.inMemory();
+    final service = AccountsService(store: store, connectors: const []);
+    final engine = MailEngine(store: store, factories: service.factories, tokenSourceFor: service.tokenSourceFor);
+    addTearDown(() => tester.runAsync(store.close));
+
+    final threads = _generateThreads(20);
+
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        servicesProvider.overrideWithValue(Services(
+          store: store,
+          engine: engine,
+          desktop: _FakeDesktop(),
+          secrets: _NoSecrets(),
+          accounts: service,
+          initialSettings: const AppSettings(),
+        )),
+        accountsProvider.overrideWith((ref) => Stream.value(const [_account])),
+        syncStatusProvider.overrideWith((ref) => const Stream.empty()),
+        hasCategoriesProvider.overrideWithValue(true),
+        unreadCountProvider.overrideWith((ref, filter) => const Stream.empty()),
+        visibleThreadsProvider.overrideWith((ref) => AsyncValue.data(threads)),
+      ],
+      child: MaterialApp(
+        theme: PlumeTheme.build(brightness: Brightness.dark),
+        home: const Scaffold(
+          body: SizedBox(
+            width: 320,
+            height: 600,
+            child: ThreadListPane(),
+          ),
+        ),
+      ),
+    ));
+    await tester.pumpAndSettle();
+
+    // Two ShaderMasks now: one for category tabs, one for thread list
+    expect(find.byType(ShaderMask), findsNWidgets(2));
+    expect(find.byType(ClipPath), findsNWidgets(2));
+
+    final horizontalScrollable = find.byWidgetPredicate((w) => w is Scrollable && w.axisDirection == AxisDirection.right && w.restorationId == null);
+    expect(horizontalScrollable, findsOneWidget);
+
+    // Scroll category tabs to the right
+    await tester.drag(horizontalScrollable, const Offset(-100, 0));
+    await tester.pumpAndSettle();
+
+    expect(find.byType(ShaderMask), findsNWidgets(2));
+    expect(find.byType(ClipPath), findsNWidgets(2));
+
+    await tester.pumpWidget(const SizedBox());
+    await tester.pump(const Duration(milliseconds: 500));
+  });
 }
