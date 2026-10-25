@@ -1,9 +1,11 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui';
 
+import 'package:flutter/foundation.dart';
 import 'package:logging/logging.dart';
+import 'package:path/path.dart' as p;
 import 'package:plume_linux/plume_linux.dart';
 
 import '../../config.dart';
@@ -40,6 +42,7 @@ final class LinuxDesktop implements DesktopIntegration {
   final _posted = <int, MailNotification>{};
 
   SystemAppearance _current = const SystemAppearance();
+  Color? _shellAccent;
   bool _trayRegistered = false;
   bool _autostartHonored = false;
   int _unread = -1;
@@ -97,6 +100,7 @@ final class LinuxDesktop implements DesktopIntegration {
   }
 
   Future<void> _startPortal() async {
+    _startShellAppearance();
     try {
       if (await _portal.initialize()) {
         _current = _convert(_portal.current);
@@ -104,21 +108,129 @@ final class LinuxDesktop implements DesktopIntegration {
           _current = _convert(s);
           _appearance.add(_current);
         }));
+      } else if (_shellAccent != null) {
+        _current = SystemAppearance(accent: _shellAccent);
       }
     } catch (e) {
       _log.info('Appearance portal unavailable: $e');
+      if (_shellAccent != null) {
+        _current = SystemAppearance(accent: _shellAccent);
+      }
     }
   }
 
-  static SystemAppearance _convert(AppearanceSettings s) => SystemAppearance(
+  SystemAppearance _convert(AppearanceSettings s) => SystemAppearance(
         brightness: switch (s.colorScheme) {
           ColorSchemePreference.dark => Brightness.dark,
           ColorSchemePreference.light => Brightness.light,
           ColorSchemePreference.noPreference => null,
         },
-        accent: s.accentColor == null ? null : Color(s.accentColor!.toArgb32()),
+        accent: s.accentColor == null ? _shellAccent : Color(s.accentColor!.toArgb32()),
         highContrast: s.contrast == ContrastPreference.high,
       );
+
+  void _startShellAppearance() {
+    _shellAccent = _resolveShellAccent();
+    final dir = _shellAccentDir();
+    if (dir == null || !dir.existsSync()) return;
+
+    try {
+      _subs.add(dir.watch().listen((event) {
+        final name = p.basename(event.path);
+        if (name == 'color.txt' || name == 'colors.json') {
+          final next = _resolveShellAccent();
+          if (next != _shellAccent) {
+            _shellAccent = next;
+            _current = _convert(_portal.current);
+            _appearance.add(_current);
+          }
+        }
+      }));
+    } catch (e) {
+      _log.fine('Cannot watch shell accent color directory: $e');
+    }
+  }
+
+  Directory? _shellAccentDir() {
+    final stateHome = Platform.environment['XDG_STATE_HOME'] ??
+        (Platform.environment['HOME'] != null
+            ? p.join(Platform.environment['HOME']!, '.local', 'state')
+            : null);
+    if (stateHome != null) {
+      return Directory(p.join(stateHome, 'quickshell', 'user', 'generated'));
+    }
+    return null;
+  }
+
+  Color? _resolveShellAccent() {
+    final dir = _shellAccentDir();
+    if (dir != null && dir.existsSync()) {
+      final color = _resolveShellAccentFromDir(dir);
+      if (color != null) return color;
+    }
+
+    final cacheHome = Platform.environment['XDG_CACHE_HOME'] ??
+        (Platform.environment['HOME'] != null
+            ? p.join(Platform.environment['HOME']!, '.cache')
+            : null);
+    if (cacheHome != null) {
+      final walFile = File(p.join(cacheHome, 'wal', 'colors.json'));
+      if (walFile.existsSync()) {
+        try {
+          final map = jsonDecode(walFile.readAsStringSync()) as Map<String, dynamic>;
+          final colors = map['colors'] as Map<String, dynamic>?;
+          final color1 = colors?['color1'] as String?;
+          if (color1 != null) {
+            final color = _parseColor(color1.trim());
+            if (color != null) return color;
+          }
+        } catch (_) {}
+      }
+    }
+
+    return null;
+  }
+
+  @visibleForTesting
+  static Color? resolveShellAccentFromDir(Directory dir) => _resolveShellAccentFromDir(dir);
+
+  static Color? _resolveShellAccentFromDir(Directory dir) {
+    final colorTxt = File(p.join(dir.path, 'color.txt'));
+    if (colorTxt.existsSync()) {
+      try {
+        final text = colorTxt.readAsStringSync().trim();
+        final color = _parseColor(text);
+        if (color != null) return color;
+      } catch (_) {}
+    }
+
+    final colorsJson = File(p.join(dir.path, 'colors.json'));
+    if (colorsJson.existsSync()) {
+      try {
+        final map = jsonDecode(colorsJson.readAsStringSync()) as Map<String, dynamic>;
+        final primary = map['primary'] as String?;
+        if (primary != null) {
+          final color = _parseColor(primary.trim());
+          if (color != null) return color;
+        }
+      } catch (_) {}
+    }
+    return null;
+  }
+
+  @visibleForTesting
+  static Color? parseColor(String text) => _parseColor(text);
+
+  static Color? _parseColor(String text) {
+    try {
+      final hex = text.startsWith('#') ? text.substring(1) : text;
+      if (hex.length == 6) {
+        final val = int.tryParse(hex, radix: 16);
+        if (val != null) return Color(0xFF000000 | val);
+      }
+    } catch (_) {}
+    return null;
+  }
 
   Future<void> _startTray() async {
     try {
