@@ -237,6 +237,12 @@ class _DesktopBridgeState extends ConsumerState<DesktopBridge> {
     ref.listen(settingsProvider.select((s) => s.runInBackground), (_, next) {
       unawaited(_desktop.setPreventClose(next && _desktop.hasTray));
     });
+    ref.listen(settingsProvider.select((s) => s.foregroundSyncMinutes), (_, minutes) {
+      _engine.foregroundInterval = Duration(minutes: minutes);
+    });
+    ref.listen(settingsProvider.select((s) => s.backgroundSyncMinutes), (_, minutes) {
+      _engine.backgroundInterval = Duration(minutes: minutes);
+    });
     return widget.child;
   }
 }

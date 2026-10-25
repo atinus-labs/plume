@@ -29,14 +29,15 @@ Future<Services> bootstrap(List<String> args) async {
     if (AppConfig.demo) DemoConnector(),
   ];
   final accounts = AccountsService(store: store, connectors: connectors);
+  final settings = await SettingsNotifier.load(store.readSetting(SettingsNotifier.storageKey));
   final engine = MailEngine(
     store: store,
     factories: accounts.factories,
     tokenSourceFor: accounts.tokenSourceFor,
+    foregroundInterval: settings.foregroundSyncInterval,
+    backgroundInterval: settings.backgroundSyncInterval,
   );
   accounts.engine = engine;
-
-  final settings = await SettingsNotifier.load(store.readSetting(SettingsNotifier.storageKey));
   final DesktopIntegration desktop = createDesktopIntegration(startHidden: args.contains('--background'));
   await desktop.start();
   await desktop.setPreventClose(settings.runInBackground && desktop.hasTray);

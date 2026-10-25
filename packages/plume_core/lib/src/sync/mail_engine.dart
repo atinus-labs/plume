@@ -30,7 +30,9 @@ final class MailEngine {
     Duration foregroundInterval = const Duration(minutes: 2),
     Duration backgroundInterval = const Duration(minutes: 10),
   })  : _factories = {for (final f in factories) f.kind: f},
+        // ignore: prefer_initializing_formals
         _foregroundInterval = foregroundInterval,
+        // ignore: prefer_initializing_formals
         _backgroundInterval = backgroundInterval;
 
   final MailStore store;

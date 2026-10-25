@@ -70,6 +70,60 @@ class SettingsPage extends ConsumerWidget {
                             onTap: () => showAddAccountDialog(context),
                           ),
                         ]),
+                        _Section(title: 'Sync', children: [
+                          _Row(
+                            icon: Symbols.sync_rounded,
+                            title: 'Foreground refresh interval',
+                            subtitle: 'How often to check for mail when Plume is open',
+                            trailing: DropdownMenu<int>(
+                              key: const ValueKey('settings_foreground_interval'),
+                              initialSelection: settings.foregroundSyncMinutes,
+                              inputDecorationTheme: const InputDecorationTheme(isDense: true),
+                              onSelected: (v) {
+                                if (v != null) notifier.update((s) => s.copyWith(foregroundSyncMinutes: v));
+                              },
+                              dropdownMenuEntries: [
+                                if (!const [1, 2, 5, 10, 15, 30].contains(settings.foregroundSyncMinutes))
+                                  DropdownMenuEntry(
+                                    value: settings.foregroundSyncMinutes,
+                                    label: 'Every ${settings.foregroundSyncMinutes} minutes',
+                                  ),
+                                const DropdownMenuEntry(value: 1, label: 'Every minute'),
+                                const DropdownMenuEntry(value: 2, label: 'Every 2 minutes'),
+                                const DropdownMenuEntry(value: 5, label: 'Every 5 minutes'),
+                                const DropdownMenuEntry(value: 10, label: 'Every 10 minutes'),
+                                const DropdownMenuEntry(value: 15, label: 'Every 15 minutes'),
+                                const DropdownMenuEntry(value: 30, label: 'Every 30 minutes'),
+                              ],
+                            ),
+                          ),
+                          _Row(
+                            icon: Symbols.schedule_rounded,
+                            title: 'Background refresh interval',
+                            subtitle: 'How often to check for mail when minimized or in the tray',
+                            trailing: DropdownMenu<int>(
+                              key: const ValueKey('settings_background_interval'),
+                              initialSelection: settings.backgroundSyncMinutes,
+                              inputDecorationTheme: const InputDecorationTheme(isDense: true),
+                              onSelected: (v) {
+                                if (v != null) notifier.update((s) => s.copyWith(backgroundSyncMinutes: v));
+                              },
+                              dropdownMenuEntries: [
+                                if (!const [2, 5, 10, 15, 30, 60].contains(settings.backgroundSyncMinutes))
+                                  DropdownMenuEntry(
+                                    value: settings.backgroundSyncMinutes,
+                                    label: 'Every ${settings.backgroundSyncMinutes} minutes',
+                                  ),
+                                const DropdownMenuEntry(value: 2, label: 'Every 2 minutes'),
+                                const DropdownMenuEntry(value: 5, label: 'Every 5 minutes'),
+                                const DropdownMenuEntry(value: 10, label: 'Every 10 minutes'),
+                                const DropdownMenuEntry(value: 15, label: 'Every 15 minutes'),
+                                const DropdownMenuEntry(value: 30, label: 'Every 30 minutes'),
+                                const DropdownMenuEntry(value: 60, label: 'Every hour'),
+                              ],
+                            ),
+                          ),
+                        ]),
                         _Section(title: 'Appearance', children: [
                           _Row(
                             icon: Symbols.dark_mode_rounded,
