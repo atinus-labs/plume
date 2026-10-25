@@ -19,7 +19,7 @@ A fast mail client for the Linux desktop, built with Flutter and Material 3 Expr
 - Push notifications via IMAP IDLE, with Open, Archive and Mark as read actions
 - Tray icon with unread count; closing the window keeps Plume running
 - Remote images blocked by default; tracking pixels removed
-- Compose with autocomplete, attachments, drafts, undo send and per-account signatures
+- Compose with rich-text formatting, autocomplete, attachments, drafts, undo send and per-account signatures
 - Instant local search, with server search on Enter
 - Gmail-style keyboard shortcuts
 - Opens `mailto:` links as the system's default mail app
@@ -104,7 +104,6 @@ Set `PLUME_ALLOW_MULTIPLE_INSTANCES=1` to run more than one instance during deve
 
 ## Known limitations
 
-- Plain-text composing only; no rich-text editor yet
 - Complex newsletter layouts may render differently than in a browser
 - GNOME needs the AppIndicator extension to show the tray icon
 - Snooze and scheduled send are unavailable for Gmail
