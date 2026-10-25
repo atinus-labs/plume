@@ -12,7 +12,13 @@ import '../state/settings.dart';
 /// Global messenger so snackbars survive pane changes.
 final scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
 
-void showSnack(String message, {String? actionLabel, VoidCallback? onAction, Duration? duration}) {
+void showSnack(
+  String message, {
+  String? actionLabel,
+  VoidCallback? onAction,
+  Duration? duration,
+  bool? showCloseIcon = true,
+}) {
   final messenger = scaffoldMessengerKey.currentState;
   if (messenger == null) return;
   messenger
@@ -21,6 +27,7 @@ void showSnack(String message, {String? actionLabel, VoidCallback? onAction, Dur
       content: Text(message),
       duration: duration ?? const Duration(seconds: 5),
       action: actionLabel == null ? null : SnackBarAction(label: actionLabel, onPressed: onAction ?? () {}),
+      showCloseIcon: showCloseIcon,
     ));
 }
 

@@ -246,6 +246,8 @@ abstract final class PlumeTheme {
         elevation: 3,
         width: 420,
         insetPadding: const EdgeInsets.all(16),
+        showCloseIcon: true,
+        closeIconColor: scheme.onInverseSurface,
       ),
       chipTheme: ChipThemeData(
         shape: RoundedRectangleBorder(borderRadius: Corners.all(Corners.small + 2)),
