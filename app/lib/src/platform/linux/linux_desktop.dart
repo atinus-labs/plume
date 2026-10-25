@@ -15,7 +15,7 @@ final _log = Logger('plume.linux');
 
 /// [DesktopIntegration] for Linux: GTK window channel, StatusNotifierItem
 /// tray, freedesktop notifications, XDG portal appearance, XDG autostart,
-/// and logind/NetworkManager wake-ups.
+/// `mailto:` handling via mimeapps.list, and logind/NetworkManager wake-ups.
 final class LinuxDesktop implements DesktopIntegration {
   LinuxDesktop({required this.startHidden});
 
@@ -30,6 +30,7 @@ final class LinuxDesktop implements DesktopIntegration {
   final _sleep = SleepMonitor();
   final _connectivity = ConnectivityMonitor();
   late final _autostart = Autostart(appId: AppConfig.appId, appName: AppConfig.appName, iconName: AppConfig.appId);
+  final _mimeApps = MimeApps();
 
   final _events = StreamController<DesktopEvent>.broadcast();
   final _appearance = StreamController<SystemAppearance>.broadcast();
@@ -67,6 +68,11 @@ final class LinuxDesktop implements DesktopIntegration {
     _subs
       ..add(_window.closeRequested.listen((_) => _events.add(const CloseRequestedEvent())))
       ..add(_window.activated.listen((a) => _events.add(ShowWindowEvent(activationToken: a.activationToken))))
+      ..add(_window.openUris.listen((uris) {
+        for (final uri in uris) {
+          _events.add(OpenUriEvent(uri));
+        }
+      }))
       ..add(_window.stateChanged.listen((s) => _events.add(
           WindowStateEvent(visible: s.visible, focused: s.focused, maximized: s.maximized))));
 
@@ -303,6 +309,34 @@ final class LinuxDesktop implements DesktopIntegration {
 
   @override
   Future<void> setAutostart(bool enabled) => enabled ? _autostart.enable() : _autostart.disable();
+
+  // Default mail app -----------------------------------------------------------------
+
+  static const _desktopId = '${AppConfig.appId}.desktop';
+
+  @override
+  Future<List<String>> takeOpenUris() => _window.takeOpenUris();
+
+  @override
+  Future<DefaultMailAppStatus> defaultMailAppStatus() async {
+    // The sandbox sees neither the host's mimeapps.list nor its launchers.
+    if (_env.isFlatpak) return DefaultMailAppStatus.unsupported;
+    try {
+      return switch (_mimeApps.handlerEntryStatus(_desktopId, mailtoSchemeHandler)) {
+        HandlerEntryStatus.missing => DefaultMailAppStatus.notInstalled,
+        HandlerEntryStatus.missingMimeType => DefaultMailAppStatus.outdatedEntry,
+        HandlerEntryStatus.ok => _mimeApps.defaultFor(mailtoSchemeHandler) == _desktopId
+            ? DefaultMailAppStatus.isDefault
+            : DefaultMailAppStatus.notDefault,
+      };
+    } catch (e) {
+      _log.warning('Reading default applications failed: $e');
+      return DefaultMailAppStatus.unsupported;
+    }
+  }
+
+  @override
+  Future<void> makeDefaultMailApp() => _mimeApps.setDefault(mailtoSchemeHandler, _desktopId);
 
   @override
   Future<void> dispose() async {

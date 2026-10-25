@@ -15,7 +15,8 @@ G_DECLARE_FINAL_TYPE(MyApplication,
  * Creates the Plume application. It is single-instance: launching it again
  * presents the running instance's window (and notifies Dart) instead of
  * starting a second copy. Pass `--background` to start without showing the
- * window; the Dart isolate still runs.
+ * window; the Dart isolate still runs. `mailto:` links on the command line
+ * (from `Exec=plume %u`) are opened in the running instance.
  *
  * Returns: a new #MyApplication.
  */

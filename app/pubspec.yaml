@@ -31,6 +31,8 @@ dependencies:
     path: ../packages/plume_imap
   plume_linux:
     path: ../packages/plume_linux
+  plume_mime:
+    path: ../packages/plume_mime
   plume_store:
     path: ../packages/plume_store
   sqlite3_flutter_libs: ^0.6.0+eol

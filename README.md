@@ -22,6 +22,7 @@ A fast mail client for the Linux desktop, built with Flutter and Material 3 Expr
 - Compose with autocomplete, attachments, drafts, undo send and per-account signatures
 - Instant local search, with server search on Enter
 - Gmail-style keyboard shortcuts
+- Opens `mailto:` links as the system's default mail app
 - Follows the desktop's light/dark mode and accent colour
 
 ## Install
@@ -36,6 +37,8 @@ tool/install.sh --client ~/Downloads/client_secret_XXXX.json  # also install a G
 Launch **Plume** from your app launcher, or run `plume`.
 
 **Start on login:** GNOME, KDE, XFCE and Cinnamon use *Settings → Start on login*. On Hyprland, Sway and similar compositors, add `~/.local/bin/plume --background` to your startup commands.
+
+**Default mail app:** choose *Settings → Default mail app → Make default* in Plume, or pick Plume as the email client in your desktop's settings (KDE: *System Settings → Default Applications*; GNOME: *Settings → Apps → Default Apps*). From a terminal, run `xdg-mime default org.atinus.plume.desktop x-scheme-handler/mailto`. Email links then open a new message in Plume, whether or not it is already running. If Plume isn't listed, run `tool/install.sh` again to update its launcher entry.
 
 ## Adding accounts
 
@@ -67,6 +70,7 @@ Google will warn that the app is unverified, since the client is yours. Choose *
 | Google client | `~/.config/plume/google-oauth-client.json` |
 | Tokens and passwords | System keyring, or a private file if none is available |
 | Autostart entry | `~/.config/autostart/org.atinus.plume.desktop` |
+| Default mail app | `~/.config/mimeapps.list` |
 
 ## Architecture
 
@@ -80,7 +84,7 @@ A Dart pub workspace. Provider and store interfaces are kept separate so new pro
 | `packages/plume_imap` | IMAP/SMTP provider, threading and server discovery |
 | `packages/plume_mime` | MIME parsing and building |
 | `packages/plume_store` | SQLite storage (drift), full-text search |
-| `packages/plume_linux` | D-Bus integration: tray, notifications, portal, autostart |
+| `packages/plume_linux` | D-Bus integration: tray, notifications, portal, autostart, default apps |
 | `packages/plume_design` | Material 3 Expressive components and theme |
 
 ## Development
@@ -91,6 +95,7 @@ cd app
 
 flutter run -d linux --dart-define=PLUME_DEMO=true    # demo account, no Google client needed
 flutter test                                          # app tests
+build/linux/x64/debug/bundle/plume 'mailto:me@example.org?subject=Hi'  # open a link (also in a running instance)
 (cd ../packages/plume_imap && dart test)              # package tests; same for the other packages
 ../packages/plume_imap/tool/integration.sh            # IMAP against Dovecot in rootless podman
 ```
@@ -102,6 +107,5 @@ Set `PLUME_ALLOW_MULTIPLE_INSTANCES=1` to run more than one instance during deve
 - Plain-text composing only; no rich-text editor yet
 - Complex newsletter layouts may render differently than in a browser
 - GNOME needs the AppIndicator extension to show the tray icon
-- `mailto:` links don't open Plume
 - Snooze and scheduled send are unavailable for Gmail
 - IMAP accounts: restoring a conversation from Trash moves all of it to the Inbox

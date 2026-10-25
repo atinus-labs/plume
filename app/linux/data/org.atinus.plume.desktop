@@ -1,13 +1,21 @@
 [Desktop Entry]
 Type=Application
+Version=1.5
 Name=Plume
 GenericName=Mail
 Comment=A fast, beautiful mail client
-Exec=plume
+Exec=plume %u
 Icon=org.atinus.plume
 Terminal=false
 Categories=Network;Email;
-Keywords=mail;email;gmail;inbox;
+Keywords=mail;email;gmail;inbox;imap;
+MimeType=x-scheme-handler/mailto;
 StartupWMClass=org.atinus.plume
 StartupNotify=true
+SingleMainWindow=true
 X-GNOME-UsesNotifications=true
+Actions=compose;
+
+[Desktop Action compose]
+Name=New Message
+Exec=plume mailto:

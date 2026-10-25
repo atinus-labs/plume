@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:plume_core/plume_core.dart';
+import 'package:plume_mime/plume_mime.dart' show MailtoLink;
 
 import '../../state/mail.dart';
 import '../../state/navigation.dart';
@@ -80,6 +81,23 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
     final blank = state.where((r) => r.mode == ComposeMode.fresh && r.to.isEmpty && to.isEmpty).firstOrNull;
     if (blank != null) return;
     _open(ComposeRequest(id: _next++, mode: ComposeMode.fresh, accountId: _defaultAccount(), to: to));
+  }
+
+  /// Opens a message prefilled from a `mailto:` link.
+  void mailto(MailtoLink link) {
+    if (link.isEmpty) return newMessage();
+    _open(ComposeRequest(
+      id: _next++,
+      mode: ComposeMode.fresh,
+      accountId: _defaultAccount(),
+      to: link.to,
+      cc: link.cc,
+      bcc: link.bcc,
+      subject: link.subject,
+      body: link.body,
+      inReplyTo: link.inReplyTo,
+      references: [?link.inReplyTo],
+    ));
   }
 
   void reply(Message m, {required bool all}) {

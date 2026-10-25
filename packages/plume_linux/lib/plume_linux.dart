@@ -1,5 +1,5 @@
 /// Linux desktop integration over D-Bus: notifications, tray, portals,
-/// autostart and session monitors.
+/// autostart, default applications and session monitors.
 ///
 /// Every component degrades gracefully: when its service is missing it
 /// reports itself unavailable instead of throwing.
@@ -12,6 +12,7 @@ export 'src/autostart.dart'
         isDesktopEntryEnabled,
         quoteExecArgument;
 export 'src/desktop_environment.dart';
+export 'src/mime_apps.dart';
 export 'src/notifications/desktop_notifications.dart';
 export 'src/notifications/markup.dart';
 export 'src/notifications/notification_request.dart' hide NotifyArguments;

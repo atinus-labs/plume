@@ -36,6 +36,14 @@ final class NotificationActionEvent extends DesktopEvent {
   final List<String> threadIds;
 }
 
+/// Open a link the app was asked to handle, e.g. a `mailto:` link clicked in
+/// a browser while Plume is the default mail app. The window is already shown.
+final class OpenUriEvent extends DesktopEvent {
+  const OpenUriEvent(this.uri);
+
+  final String uri;
+}
+
 final class ComposeEvent extends DesktopEvent {
   const ComposeEvent({this.activationToken});
 
@@ -96,6 +104,27 @@ final class MailNotification {
   final bool sound;
 }
 
+/// Whether `mailto:` links open Plume.
+enum DefaultMailAppStatus {
+  /// Plume handles them.
+  isDefault,
+
+  /// Another app (or none) is the default; Plume can take over.
+  notDefault,
+
+  /// Plume's launcher entry is not installed (e.g. a development build), so
+  /// the desktop cannot start it for a link.
+  notInstalled,
+
+  /// The installed launcher entry predates `mailto:` support; reinstalling
+  /// replaces it.
+  outdatedEntry,
+
+  /// The default can only be changed in the system settings (sandboxed or
+  /// non-Linux builds).
+  unsupported,
+}
+
 /// Appearance preferences published by the desktop.
 final class SystemAppearance {
   const SystemAppearance({this.brightness, this.accent, this.highContrast = false});
@@ -141,6 +170,17 @@ abstract interface class DesktopIntegration {
 
   Future<bool> isAutostartEnabled();
   Future<void> setAutostart(bool enabled);
+
+  /// Links received before anyone listened to [events] (such as the one the
+  /// app was launched with). Later links arrive as [OpenUriEvent]s; listen
+  /// before calling this so none are missed.
+  Future<List<String>> takeOpenUris();
+
+  Future<DefaultMailAppStatus> defaultMailAppStatus();
+
+  /// Makes Plume the handler for `mailto:` links. Only valid when
+  /// [defaultMailAppStatus] is [DefaultMailAppStatus.notDefault].
+  Future<void> makeDefaultMailApp();
 
   Future<void> dispose();
 }
@@ -188,6 +228,12 @@ final class HeadlessDesktop implements DesktopIntegration {
   Future<bool> isAutostartEnabled() async => false;
   @override
   Future<void> setAutostart(bool enabled) async {}
+  @override
+  Future<List<String>> takeOpenUris() async => const [];
+  @override
+  Future<DefaultMailAppStatus> defaultMailAppStatus() async => DefaultMailAppStatus.unsupported;
+  @override
+  Future<void> makeDefaultMailApp() async {}
   @override
   Future<void> dispose() => _events.close();
 }

@@ -51,4 +51,15 @@ void plume_main_window_present(PlumeMainWindow* self,
 void plume_main_window_notify_activated(PlumeMainWindow* self,
                                         const gchar* activation_token);
 
+/**
+ * plume_main_window_open_uris:
+ * @self: a #PlumeMainWindow.
+ * @uris: (array zero-terminated=1): `mailto:` links to open.
+ *
+ * Passes links to Dart. They are queued until Dart calls `takeOpenUris` (so
+ * the link Plume was launched with is not lost while Flutter starts) and sent
+ * with `onOpenUris` after that. Does not present the window.
+ */
+void plume_main_window_open_uris(PlumeMainWindow* self, gchar** uris);
+
 #endif  // RUNNER_MAIN_WINDOW_H_

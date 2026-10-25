@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:logging/logging.dart';
 import 'package:plume_core/plume_core.dart';
 import 'package:plume_design/plume_design.dart';
+import 'package:plume_mime/plume_mime.dart' show MailtoLink;
 
 import '../services/avatar_renderer.dart';
 import '../services/desktop.dart';
@@ -33,6 +34,9 @@ class _DesktopBridgeState extends ConsumerState<DesktopBridge> {
   bool _visible = true;
   bool _focused = true;
 
+  /// `mailto:` links waiting for the first account to be added.
+  final _pendingLinks = <MailtoLink>[];
+
   DesktopIntegration get _desktop => ref.read(desktopProvider);
   MailEngine get _engine => ref.read(engineProvider);
 
@@ -50,6 +54,9 @@ class _DesktopBridgeState extends ConsumerState<DesktopBridge> {
       _focused = visible;
       _engine.foreground = visible;
     }));
+    // Links that arrived before this widget listened, such as the one Plume
+    // was launched with (`plume mailto:…`).
+    unawaited(_desktop.takeOpenUris().then((uris) => uris.forEach(_openUri)));
   }
 
   @override
@@ -75,6 +82,8 @@ class _DesktopBridgeState extends ConsumerState<DesktopBridge> {
       case NotificationActionEvent(:final action, :final accountId, :final threadIds):
         final keys = [for (final t in threadIds) (accountId: accountId, threadId: t)];
         await applyThreadAction(ref, action == 'archive' ? MailAction.archive : MailAction.markRead, keys, announce: false);
+      case OpenUriEvent(:final uri):
+        _openUri(uri);
       case ComposeEvent(:final activationToken):
         await _desktop.showWindow(activationToken: activationToken);
         ref.read(composeProvider.notifier).newMessage();
@@ -96,6 +105,29 @@ class _DesktopBridgeState extends ConsumerState<DesktopBridge> {
         _focused = focused;
         _engine.foreground = visible;
     }
+  }
+
+  void _openUri(String uri) {
+    final link = MailtoLink.tryParse(uri);
+    if (link == null) {
+      _log.warning('Ignoring unsupported link $uri');
+      return;
+    }
+    _log.info('Opening a mailto: link');
+    final accounts = ref.read(accountsProvider);
+    if (accounts.value?.isNotEmpty ?? false) {
+      ref.read(composeProvider.notifier).mailto(link);
+      return;
+    }
+    // Still loading, or no account yet: open it once one exists.
+    _pendingLinks.add(link);
+    if (accounts.hasValue) showSnack('Add an account to write this message');
+  }
+
+  void _openPendingLinks() {
+    final links = [..._pendingLinks];
+    _pendingLinks.clear();
+    links.forEach(ref.read(composeProvider.notifier).mailto);
   }
 
   Future<void> _quit() async {
@@ -199,6 +231,9 @@ class _DesktopBridgeState extends ConsumerState<DesktopBridge> {
         if (count != null) unawaited(_desktop.setUnreadCount(count));
       },
     );
+    ref.listen(accountsProvider, (_, next) {
+      if (_pendingLinks.isNotEmpty && (next.value?.isNotEmpty ?? false)) _openPendingLinks();
+    });
     ref.listen(settingsProvider.select((s) => s.runInBackground), (_, next) {
       unawaited(_desktop.setPreventClose(next && _desktop.hasTray));
     });

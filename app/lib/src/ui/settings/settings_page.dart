@@ -8,6 +8,7 @@ import 'package:plume_core/plume_core.dart';
 import 'package:plume_design/plume_design.dart';
 
 import '../../config.dart';
+import '../../services/desktop.dart';
 import '../../services/imap_connector.dart';
 import '../../state/mail.dart';
 import '../../state/services.dart';
@@ -184,6 +185,7 @@ class SettingsPage extends ConsumerWidget {
                             },
                           ),
                           const _AutostartRow(),
+                          const _DefaultMailAppRow(),
                           _Row(
                             icon: Symbols.key_rounded,
                             title: 'Credentials',
@@ -545,6 +547,80 @@ class _AutostartRowState extends ConsumerState<_AutostartRow> {
       onChanged: (v) async {
         setState(() => _enabled = v);
         await desktop.setAutostart(v);
+      },
+    );
+  }
+}
+
+class _DefaultMailAppRow extends ConsumerStatefulWidget {
+  const _DefaultMailAppRow();
+
+  @override
+  ConsumerState<_DefaultMailAppRow> createState() => _DefaultMailAppRowState();
+}
+
+class _DefaultMailAppRowState extends ConsumerState<_DefaultMailAppRow> with WidgetsBindingObserver {
+  DefaultMailAppStatus? _status;
+  bool _busy = false;
+
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+    unawaited(_refresh());
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  // The default may have changed in the system settings meanwhile.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state == AppLifecycleState.resumed) unawaited(_refresh());
+  }
+
+  Future<void> _refresh() async {
+    final status = await ref.read(desktopProvider).defaultMailAppStatus();
+    if (mounted) setState(() => _status = status);
+  }
+
+  Future<void> _makeDefault() async {
+    setState(() => _busy = true);
+    try {
+      await ref.read(desktopProvider).makeDefaultMailApp();
+    } catch (e) {
+      showSnack('Couldn’t make Plume the default: $e');
+    }
+    await _refresh();
+    if (mounted) setState(() => _busy = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final status = _status;
+    return _Row(
+      icon: Symbols.alternate_email_rounded,
+      title: 'Default mail app',
+      subtitle: switch (status) {
+        null => null,
+        DefaultMailAppStatus.isDefault => 'Email links open in Plume',
+        DefaultMailAppStatus.notDefault => 'Email links open in another app',
+        DefaultMailAppStatus.notInstalled =>
+          'Install Plume with tool/install.sh so email links can open it',
+        DefaultMailAppStatus.outdatedEntry =>
+          'Plume’s launcher entry is out of date. Run tool/install.sh again so email links can open it.',
+        DefaultMailAppStatus.unsupported => 'Choose Plume as the email app in your system settings',
+      },
+      trailing: switch (status) {
+        DefaultMailAppStatus.notDefault => FilledButton.tonal(
+            onPressed: _busy ? null : _makeDefault,
+            child: const Text('Make default'),
+          ),
+        DefaultMailAppStatus.isDefault => Icon(Symbols.check_circle_rounded, color: Theme.of(context).colorScheme.primary),
+        _ => null,
       },
     );
   }

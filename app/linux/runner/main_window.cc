@@ -71,6 +71,11 @@ struct _PlumeMainWindow {
   guint button_press_signal_id;
   gulong button_press_hook_id;
 
+  // Links (`mailto:` URIs) to open, held until Dart takes them with
+  // `takeOpenUris`; afterwards they are pushed with `onOpenUris`.
+  GPtrArray* pending_uris;
+  gboolean dart_takes_uris;
+
   // Pending debounced window state notification.
   guint state_update_source_id;
 
@@ -116,6 +121,17 @@ static void invoke_dart(PlumeMainWindow* self,
   }
   fl_method_channel_invoke_method(self->channel, method, args, nullptr,
                                   nullptr, nullptr);
+}
+
+// Moves the pending links into a new list value for Dart.
+static FlValue* take_pending_uris(PlumeMainWindow* self) {
+  FlValue* list = fl_value_new_list();
+  for (guint i = 0; i < self->pending_uris->len; i++) {
+    fl_value_append_take(list, fl_value_new_string(static_cast<const gchar*>(
+                                   g_ptr_array_index(self->pending_uris, i))));
+  }
+  g_ptr_array_set_size(self->pending_uris, 0);
+  return list;
 }
 
 // Hands an activation token to GDK so the next focus request may steal focus.
@@ -459,6 +475,12 @@ static void method_call_cb(FlMethodChannel* channel,
       gtk_window_set_title(window, title);
       response = success();
     }
+  } else if (strcmp(method, "takeOpenUris") == 0) {
+    // Dart is ready for links: return those received so far (e.g. the one
+    // Plume was launched with) and push later ones as they arrive.
+    self->dart_takes_uris = TRUE;
+    g_autoptr(FlValue) result = take_pending_uris(self);
+    response = success(result);
   } else if (strcmp(method, "quit") == 0) {
     g_idle_add(quit_idle_cb, nullptr);
     response = success();
@@ -556,6 +578,7 @@ static void plume_main_window_dispose(GObject* object) {
   g_clear_object(&self->channel);
   g_clear_pointer(&self->last_button_press, gdk_event_free);
   g_clear_pointer(&self->pending_token, g_free);
+  g_clear_pointer(&self->pending_uris, g_ptr_array_unref);
   g_clear_object(&self->cancellable);
   self->view = nullptr;
   g_clear_object(&self->window);
@@ -569,6 +592,7 @@ static void plume_main_window_class_init(PlumeMainWindowClass* klass) {
 
 static void plume_main_window_init(PlumeMainWindow* self) {
   self->cancellable = g_cancellable_new();
+  self->pending_uris = g_ptr_array_new_with_free_func(g_free);
 }
 
 PlumeMainWindow* plume_main_window_new(GtkApplication* application,
@@ -682,4 +706,16 @@ void plume_main_window_notify_activated(PlumeMainWindow* self,
                                ? fl_value_new_string(activation_token)
                                : fl_value_new_null());
   invoke_dart(self, "onActivated", args);
+}
+
+void plume_main_window_open_uris(PlumeMainWindow* self, gchar** uris) {
+  g_return_if_fail(PLUME_IS_MAIN_WINDOW(self));
+
+  for (gchar** uri = uris; uri != nullptr && *uri != nullptr; uri++) {
+    g_ptr_array_add(self->pending_uris, g_strdup(*uri));
+  }
+  if (self->dart_takes_uris && self->pending_uris->len > 0) {
+    g_autoptr(FlValue) args = take_pending_uris(self);
+    invoke_dart(self, "onOpenUris", args);
+  }
 }

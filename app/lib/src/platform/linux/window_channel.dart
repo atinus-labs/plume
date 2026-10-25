@@ -94,7 +94,8 @@ final class LinuxWindowActivation {
 ///
 /// The runner starts hidden when launched with `--background`: the Dart
 /// isolate runs but nothing renders until [show] is called. A second launch of
-/// the app presents the window and emits [activated].
+/// the app presents the window and emits [activated]. Links the app is asked
+/// to open (`plume mailto:…`) are collected with [takeOpenUris] and [openUris].
 class LinuxWindow {
   LinuxWindow({MethodChannel? channel, DesktopEnvironment? environment})
     : _channel = channel ?? const MethodChannel(channelName),
@@ -111,6 +112,7 @@ class LinuxWindow {
 
   final _closeRequested = StreamController<void>.broadcast();
   final _activated = StreamController<LinuxWindowActivation>.broadcast();
+  final _openUris = StreamController<List<String>>.broadcast();
   final _stateChanged = StreamController<LinuxWindowState>.broadcast();
   LinuxWindowState _state = const LinuxWindowState();
 
@@ -124,6 +126,10 @@ class LinuxWindow {
 
   /// Another launch activated this instance; see [LinuxWindowActivation].
   Stream<LinuxWindowActivation> get activated => _activated.stream;
+
+  /// `mailto:` links to open, received after [takeOpenUris] was called. The
+  /// runner has already presented the window.
+  Stream<List<String>> get openUris => _openUris.stream;
 
   /// Maximised/fullscreen/focus/visibility/tiling changes.
   Stream<LinuxWindowState> get stateChanged => _stateChanged.stream;
@@ -165,6 +171,14 @@ class LinuxWindow {
 
   Future<void> setTitle(String title) => _invoke<void>('setTitle', title);
 
+  /// Returns the links received so far, including the one the app was
+  /// launched with, and has the runner send later ones through [openUris].
+  /// Listen to [openUris] before calling this so none are missed.
+  Future<List<String>> takeOpenUris() async {
+    final uris = await _invoke<List<Object?>>('takeOpenUris');
+    return [...?uris?.whereType<String>()];
+  }
+
   /// Quits the application for real, regardless of [setPreventClose].
   Future<void> quit() => _invoke<void>('quit');
 
@@ -173,6 +187,7 @@ class LinuxWindow {
     _channel.setMethodCallHandler(null);
     unawaited(_closeRequested.close());
     unawaited(_activated.close());
+    unawaited(_openUris.close());
     unawaited(_stateChanged.close());
   }
 
@@ -197,6 +212,9 @@ class LinuxWindow {
             activationToken: token is String ? token : null,
           ),
         );
+      case 'onOpenUris':
+        final args = call.arguments;
+        if (args is List) _openUris.add([...args.whereType<String>()]);
       case 'onWindowStateChanged':
         final args = call.arguments;
         if (args is Map) {
