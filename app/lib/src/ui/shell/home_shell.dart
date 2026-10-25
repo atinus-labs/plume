@@ -85,18 +85,28 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                       final railExpanded = settings.railExpanded && constraints.maxWidth >= 1180;
                       final maxList = (constraints.maxWidth - (railExpanded ? 272 : 88) - 380).clamp(320.0, 640.0);
                       final listWidth = settings.listWidth.clamp(320.0, maxList);
+                      final onRight = settings.mailListOnRight;
                       return Padding(
                         padding: EdgeInsets.only(top: top, bottom: 8, right: 8),
                         child: Row(
                           crossAxisAlignment: CrossAxisAlignment.stretch,
                           children: [
                             NavRailHost(expanded: railExpanded, onOpenSettings: _openSettings),
-                            SizedBox(width: listWidth, child: const ThreadListPane()),
-                            _ResizeHandle(
-                              onDrag: (dx) => ref.read(settingsProvider.notifier).update(
-                                  (s) => s.copyWith(listWidth: (listWidth + dx).clamp(320.0, maxList))),
-                            ),
-                            const Expanded(child: Pane(child: ReaderPane())),
+                            if (!onRight) ...[
+                              SizedBox(width: listWidth, child: const ThreadListPane()),
+                              _ResizeHandle(
+                                onDrag: (dx) => ref.read(settingsProvider.notifier).update(
+                                    (s) => s.copyWith(listWidth: (listWidth + dx).clamp(320.0, maxList))),
+                              ),
+                              const Expanded(child: Pane(child: ReaderPane())),
+                            ] else ...[
+                              const Expanded(child: Pane(child: ReaderPane())),
+                              _ResizeHandle(
+                                onDrag: (dx) => ref.read(settingsProvider.notifier).update(
+                                    (s) => s.copyWith(listWidth: (listWidth - dx).clamp(320.0, maxList))),
+                              ),
+                              SizedBox(width: listWidth, child: const ThreadListPane()),
+                            ],
                           ],
                         ),
                       );
@@ -158,6 +168,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     }
 
     ThreadSummary? openSummary() => list.where((t) => keyOf(t) == open).firstOrNull;
+
     Future<Message?> lastMessage() async {
       if (open == null) return null;
       final detail = await ref.read(storeProvider).watchThread(open.accountId, open.threadId).first;

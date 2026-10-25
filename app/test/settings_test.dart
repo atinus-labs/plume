@@ -10,7 +10,11 @@ import 'package:plume/src/state/mail.dart';
 import 'package:plume/src/state/services.dart';
 import 'package:plume/src/state/settings.dart';
 import 'package:plume/src/ui/desktop_bridge.dart';
+import 'package:plume/src/ui/reader/reader_pane.dart';
 import 'package:plume/src/ui/settings/settings_page.dart';
+import 'package:plume/src/ui/shell/home_shell.dart';
+import 'package:plume/src/ui/shell/title_bar.dart';
+import 'package:plume/src/ui/threads/thread_list_pane.dart';
 import 'package:plume_core/plume_core.dart';
 import 'package:plume_design/plume_design.dart';
 import 'package:plume_store/plume_store.dart';
@@ -89,6 +93,39 @@ void main() {
       final updated = original.copyWith(foregroundSyncMinutes: 15, backgroundSyncMinutes: 60);
       expect(updated.foregroundSyncMinutes, 15);
       expect(updated.backgroundSyncMinutes, 60);
+    });
+  });
+
+  group('AppSettings mailListPosition', () {
+    test('defaults to left', () {
+      const settings = AppSettings();
+      expect(settings.mailListPosition, MailListPosition.left);
+      expect(settings.mailListOnRight, isFalse);
+    });
+
+    test('serializes and deserializes correctly', () {
+      const original = AppSettings(mailListPosition: MailListPosition.right);
+      final json = original.toJson();
+      expect(json['mailListPosition'], 'right');
+
+      final loaded = AppSettings.fromJson(json);
+      expect(loaded.mailListPosition, MailListPosition.right);
+      expect(loaded.mailListOnRight, isTrue);
+    });
+
+    test('copyWith updates mailListPosition', () {
+      const original = AppSettings();
+      final updated1 = original.copyWith(mailListPosition: MailListPosition.right);
+      expect(updated1.mailListPosition, MailListPosition.right);
+      expect(updated1.mailListOnRight, isTrue);
+
+      final updated2 = original.copyWith(mailListOnRight: true);
+      expect(updated2.mailListPosition, MailListPosition.right);
+      expect(updated2.mailListOnRight, isTrue);
+
+      final updated3 = updated2.copyWith(mailListOnRight: false);
+      expect(updated3.mailListPosition, MailListPosition.left);
+      expect(updated3.mailListOnRight, isFalse);
     });
   });
 
@@ -202,6 +239,185 @@ void main() {
 
       expect(container.read(settingsProvider).backgroundSyncMinutes, 30);
       expect(engine.backgroundInterval, const Duration(minutes: 30));
+    });
+
+    testWidgets('displays Mail list position option and toggles to right side', (tester) async {
+      final store = DriftMailStore.inMemory();
+      addTearDown(() => tester.runAsync(store.close));
+
+      final service = AccountsService(store: store, connectors: const []);
+      final engine = MailEngine(
+        store: store,
+        factories: service.factories,
+        tokenSourceFor: service.tokenSourceFor,
+      );
+
+      final container = ProviderContainer(
+        overrides: [
+          servicesProvider.overrideWithValue(Services(
+            store: store,
+            engine: engine,
+            desktop: HeadlessDesktop(),
+            secrets: _NoSecrets(),
+            accounts: service,
+            initialSettings: const AppSettings(),
+          )),
+          accountsProvider.overrideWith((ref) => Stream.value(const [_account])),
+          syncStatusProvider.overrideWith((ref) => Stream.value(const {})),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      tester.view.physicalSize = const Size(1200, 1600);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          theme: PlumeTheme.build(brightness: Brightness.light, seed: PlumeTheme.defaultSeed, contrast: 0.0),
+          home: const DesktopBridge(
+            child: SettingsPage(),
+          ),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      expect(find.text('Mail list position'), findsOneWidget);
+      expect(find.text('Move the mail list to the right side'), findsOneWidget);
+
+      // Initially Left is selected
+      expect(container.read(settingsProvider).mailListPosition, MailListPosition.left);
+
+      // Tap Right segment
+      await tester.tap(find.text('Right'));
+      await tester.pumpAndSettle();
+
+      expect(container.read(settingsProvider).mailListPosition, MailListPosition.right);
+      expect(container.read(settingsProvider).mailListOnRight, isTrue);
+
+      // Tap Left segment
+      await tester.tap(find.text('Left'));
+      await tester.pumpAndSettle();
+
+      expect(container.read(settingsProvider).mailListPosition, MailListPosition.left);
+      expect(container.read(settingsProvider).mailListOnRight, isFalse);
+    });
+  });
+
+  group('HomeShell layout', () {
+    testWidgets('places mail list on right side when mailListPosition is right, keeping nav rail on left', (tester) async {
+      final store = DriftMailStore.inMemory();
+      addTearDown(() => tester.runAsync(store.close));
+
+      final service = AccountsService(store: store, connectors: const []);
+      final engine = MailEngine(
+        store: store,
+        factories: service.factories,
+        tokenSourceFor: service.tokenSourceFor,
+      );
+
+      final container = ProviderContainer(
+        overrides: [
+          servicesProvider.overrideWithValue(Services(
+            store: store,
+            engine: engine,
+            desktop: HeadlessDesktop(),
+            secrets: _NoSecrets(),
+            accounts: service,
+            initialSettings: const AppSettings(mailListPosition: MailListPosition.right),
+          )),
+          accountsProvider.overrideWith((ref) => Stream.value(const [_account])),
+          syncStatusProvider.overrideWith((ref) => Stream.value(const {})),
+          hasCategoriesProvider.overrideWithValue(false),
+          unreadCountProvider.overrideWith((ref, filter) => Stream.value(0)),
+          mailboxesProvider.overrideWith((ref, id) => Stream.value(const <Mailbox>[])),
+          usesFoldersProvider.overrideWith((ref, id) => false),
+          visibleThreadsProvider.overrideWithValue(const AsyncValue.data(<ThreadSummary>[])),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          theme: PlumeTheme.build(brightness: Brightness.light, seed: PlumeTheme.defaultSeed, contrast: 0.0),
+          home: const DesktopBridge(child: HomeShell()),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      final navRailHostRect = tester.getRect(find.byType(NavRailHost));
+      final threadListRect = tester.getRect(find.byType(ThreadListPane));
+      final readerPaneRect = tester.getRect(find.byType(ReaderPane));
+
+      // Nav rail remains on the left
+      expect(navRailHostRect.left, lessThan(readerPaneRect.left));
+      expect(navRailHostRect.left, lessThan(threadListRect.left));
+
+      // Reader pane is in the middle / left of the mail list
+      expect(readerPaneRect.left, lessThan(threadListRect.left));
+      // ThreadListPane is on the right side!
+      expect(threadListRect.left, greaterThan(readerPaneRect.left));
+    });
+
+    testWidgets('places mail list on left side by default', (tester) async {
+      final store = DriftMailStore.inMemory();
+      addTearDown(() => tester.runAsync(store.close));
+
+      final service = AccountsService(store: store, connectors: const []);
+      final engine = MailEngine(
+        store: store,
+        factories: service.factories,
+        tokenSourceFor: service.tokenSourceFor,
+      );
+
+      final container = ProviderContainer(
+        overrides: [
+          servicesProvider.overrideWithValue(Services(
+            store: store,
+            engine: engine,
+            desktop: HeadlessDesktop(),
+            secrets: _NoSecrets(),
+            accounts: service,
+            initialSettings: const AppSettings(mailListPosition: MailListPosition.left),
+          )),
+          accountsProvider.overrideWith((ref) => Stream.value(const [_account])),
+          syncStatusProvider.overrideWith((ref) => Stream.value(const {})),
+          hasCategoriesProvider.overrideWithValue(false),
+          unreadCountProvider.overrideWith((ref, filter) => Stream.value(0)),
+          mailboxesProvider.overrideWith((ref, id) => Stream.value(const <Mailbox>[])),
+          usesFoldersProvider.overrideWith((ref, id) => false),
+          visibleThreadsProvider.overrideWithValue(const AsyncValue.data(<ThreadSummary>[])),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          theme: PlumeTheme.build(brightness: Brightness.light, seed: PlumeTheme.defaultSeed, contrast: 0.0),
+          home: const DesktopBridge(child: HomeShell()),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      final navRailHostRect = tester.getRect(find.byType(NavRailHost));
+      final threadListRect = tester.getRect(find.byType(ThreadListPane));
+      final readerPaneRect = tester.getRect(find.byType(ReaderPane));
+
+      // Nav rail is on the left
+      expect(navRailHostRect.left, lessThan(threadListRect.left));
+      // Mail list is on the left (between nav rail and reader)
+      expect(threadListRect.left, lessThan(readerPaneRect.left));
     });
   });
 }

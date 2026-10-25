@@ -154,6 +154,26 @@ class SettingsPage extends ConsumerWidget {
                             value: settings.categoryTabs,
                             onChanged: (v) => notifier.update((s) => s.copyWith(categoryTabs: v)),
                           ),
+                          _Row(
+                            icon: Symbols.dock_to_right_rounded,
+                            title: 'Mail list position',
+                            subtitle: 'Move the mail list to the right side',
+                            onTap: () => notifier.update((s) => s.copyWith(
+                              mailListPosition: s.mailListPosition == MailListPosition.left
+                                  ? MailListPosition.right
+                                  : MailListPosition.left,
+                            )),
+                            trailing: SegmentedButton<MailListPosition>(
+                              key: const ValueKey('settings_mail_list_position'),
+                              showSelectedIcon: false,
+                              segments: const [
+                                ButtonSegment(value: MailListPosition.left, label: Text('Left')),
+                                ButtonSegment(value: MailListPosition.right, label: Text('Right')),
+                              ],
+                              selected: {settings.mailListPosition},
+                              onSelectionChanged: (v) => notifier.update((s) => s.copyWith(mailListPosition: v.first)),
+                            ),
+                          ),
                         ]),
                         _Section(title: 'Notifications', children: [
                           _SwitchRow(

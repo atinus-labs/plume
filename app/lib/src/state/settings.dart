@@ -20,6 +20,9 @@ enum AfterAction { nextOlder, nextNewer, list }
 /// to senders that and when a message was read.
 enum RemoteImages { ask, always }
 
+/// Where the conversation list appears relative to the reading pane.
+enum MailListPosition { left, right }
+
 @immutable
 final class AppSettings {
   const AppSettings({
@@ -39,6 +42,7 @@ final class AppSettings {
     this.listWidth = 420,
     this.foregroundSyncMinutes = 2,
     this.backgroundSyncMinutes = 10,
+    this.mailListPosition = MailListPosition.left,
   });
 
   final ThemeMode themeMode;
@@ -70,6 +74,11 @@ final class AppSettings {
   /// How often to check for mail when Plume is minimized or in the tray (in minutes).
   final int backgroundSyncMinutes;
 
+  /// Position of the message list pane relative to the reader pane on wide layouts.
+  final MailListPosition mailListPosition;
+
+  bool get mailListOnRight => mailListPosition == MailListPosition.right;
+
   Duration get foregroundSyncInterval => Duration(minutes: foregroundSyncMinutes);
   Duration get backgroundSyncInterval => Duration(minutes: backgroundSyncMinutes);
 
@@ -90,6 +99,8 @@ final class AppSettings {
     double? listWidth,
     int? foregroundSyncMinutes,
     int? backgroundSyncMinutes,
+    MailListPosition? mailListPosition,
+    bool? mailListOnRight,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -108,6 +119,10 @@ final class AppSettings {
         listWidth: listWidth ?? this.listWidth,
         foregroundSyncMinutes: foregroundSyncMinutes ?? this.foregroundSyncMinutes,
         backgroundSyncMinutes: backgroundSyncMinutes ?? this.backgroundSyncMinutes,
+        mailListPosition: mailListPosition ??
+            (mailListOnRight != null
+                ? (mailListOnRight ? MailListPosition.right : MailListPosition.left)
+                : this.mailListPosition),
       );
 
   Map<String, Object?> toJson() => {
@@ -127,6 +142,7 @@ final class AppSettings {
         'listWidth': listWidth,
         'foregroundSyncMinutes': foregroundSyncMinutes,
         'backgroundSyncMinutes': backgroundSyncMinutes,
+        'mailListPosition': mailListPosition.name,
       };
 
   static AppSettings fromJson(Map<String, Object?> j) {
@@ -150,6 +166,11 @@ final class AppSettings {
       listWidth: (j['listWidth'] as num?)?.toDouble() ?? d.listWidth,
       foregroundSyncMinutes: (j['foregroundSyncMinutes'] as num?)?.toInt() ?? d.foregroundSyncMinutes,
       backgroundSyncMinutes: (j['backgroundSyncMinutes'] as num?)?.toInt() ?? d.backgroundSyncMinutes,
+      mailListPosition: pick(
+        MailListPosition.values,
+        j['mailListPosition'],
+        (j['mailListOnRight'] as bool?) == true ? MailListPosition.right : d.mailListPosition,
+      ),
     );
   }
 }
