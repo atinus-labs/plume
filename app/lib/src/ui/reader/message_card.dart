@@ -147,25 +147,30 @@ class _MessageCardState extends ConsumerState<MessageCard> {
                     ],
                   ),
                 ),
-                Tooltip(
-                  message: fullDate(m.date),
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 4, left: 8),
-                    child: Text(listDate(m.date), style: theme.textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant)),
-                  ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Tooltip(
+                      message: fullDate(m.date),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        child: Text(listDate(m.date), style: theme.textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant)),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: m.isFlagged ? 'Unstar' : 'Star',
+                      onPressed: () => applyMessageAction(ref, m.isFlagged ? MailAction.unflag : MailAction.flag, m.accountId, [m.id]),
+                      icon: Icon(Symbols.star_rounded, fill: m.isFlagged ? 1 : 0,
+                          color: m.isFlagged ? const Color(0xFFE8A200) : scheme.onSurfaceVariant),
+                    ),
+                    IconButton(
+                      tooltip: 'Reply',
+                      onPressed: () => ref.read(composeProvider.notifier).reply(m, all: false),
+                      icon: const Icon(Symbols.reply_rounded),
+                    ),
+                    _MessageMenu(message: m),
+                  ],
                 ),
-                IconButton(
-                  tooltip: m.isFlagged ? 'Unstar' : 'Star',
-                  onPressed: () => applyMessageAction(ref, m.isFlagged ? MailAction.unflag : MailAction.flag, m.accountId, [m.id]),
-                  icon: Icon(Symbols.star_rounded, fill: m.isFlagged ? 1 : 0,
-                      color: m.isFlagged ? const Color(0xFFE8A200) : scheme.onSurfaceVariant),
-                ),
-                IconButton(
-                  tooltip: 'Reply',
-                  onPressed: () => ref.read(composeProvider.notifier).reply(m, all: false),
-                  icon: const Icon(Symbols.reply_rounded),
-                ),
-                _MessageMenu(message: m),
               ],
             ),
           ),
