@@ -2,6 +2,8 @@ import 'dart:async';
 
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:file_selector/file_selector.dart';
+import '../../state/avatars.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:plume_core/plume_core.dart';
@@ -199,6 +201,29 @@ class SettingsPage extends ConsumerWidget {
                           ),
                         ]),
                         _Section(title: 'Reading & sending', children: [
+                          _SwitchRow(
+                            icon: Symbols.account_circle_rounded,
+                            title: 'Sender profile pictures',
+                            subtitle: 'Display avatars for senders in the message list and conversation view',
+                            value: settings.showSenderAvatars,
+                            onChanged: (v) => notifier.update((s) => s.copyWith(showSenderAvatars: v)),
+                          ),
+                          _SwitchRow(
+                            icon: Symbols.domain_rounded,
+                            title: 'Domain logos',
+                            subtitle: 'Load company and service logos for sender domains via privacy proxy',
+                            value: settings.fetchDomainFavicons,
+                            enabled: settings.showSenderAvatars,
+                            onChanged: (v) => notifier.update((s) => s.copyWith(fetchDomainFavicons: v)),
+                          ),
+                          _SwitchRow(
+                            icon: Symbols.public_rounded,
+                            title: 'Gravatar avatars',
+                            subtitle: 'Look up sender and account avatars on Gravatar via email hash',
+                            value: settings.enableGravatar,
+                            enabled: settings.showSenderAvatars,
+                            onChanged: (v) => notifier.update((s) => s.copyWith(enableGravatar: v)),
+                          ),
                           _Row(
                             icon: Symbols.image_rounded,
                             title: 'Images in messages',
@@ -488,7 +513,7 @@ class _AccountRow extends ConsumerWidget {
           MorphAvatar(
             name: account.displayName,
             colorKey: account.email,
-            image: account.avatarUrl == null ? null : NetworkImage(account.avatarUrl!),
+            image: ref.watch(accountAvatarProvider(account)).value,
             size: 44,
           ),
           const SizedBox(width: 16),
@@ -508,6 +533,17 @@ class _AccountRow extends ConsumerWidget {
             ),
           MenuAnchor(
             menuChildren: [
+              MenuItemButton(
+                leadingIcon: const Icon(Symbols.account_circle_rounded),
+                onPressed: () => _pickAvatarPhoto(context, ref),
+                child: const Text('Change profile picture…'),
+              ),
+              if (account.avatarUrl != null)
+                MenuItemButton(
+                  leadingIcon: const Icon(Symbols.delete_outline_rounded),
+                  onPressed: () => _resetAvatar(context, ref),
+                  child: const Text('Reset profile picture'),
+                ),
               MenuItemButton(
                 leadingIcon: const Icon(Symbols.signature_rounded),
                 onPressed: () => _editSignature(context, ref),
@@ -539,6 +575,23 @@ class _AccountRow extends ConsumerWidget {
         ],
       ),
     );
+  }
+
+  Future<void> _pickAvatarPhoto(BuildContext context, WidgetRef ref) async {
+    const typeGroup = XTypeGroup(label: 'Images', extensions: ['png', 'jpg', 'jpeg', 'webp']);
+    final file = await openFile(acceptedTypeGroups: [typeGroup]);
+    if (file == null) return;
+    final store = ref.read(storeProvider);
+    await store.saveAccount(account.copyWith(avatarUrl: file.path));
+    ref.read(avatarServiceProvider).clearMemoryCache();
+    ref.invalidate(accountAvatarProvider(account));
+  }
+
+  Future<void> _resetAvatar(BuildContext context, WidgetRef ref) async {
+    final store = ref.read(storeProvider);
+    await store.saveAccount(account.copyWith(clearAvatarUrl: true));
+    ref.read(avatarServiceProvider).clearMemoryCache();
+    ref.invalidate(accountAvatarProvider(account));
   }
 
   Future<void> _editSignature(BuildContext context, WidgetRef ref) async {

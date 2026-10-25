@@ -25,6 +25,16 @@ abstract final class AppConfig {
   /// Where a Google OAuth client file (as downloaded from Google Cloud
   /// Console) is looked up when the build does not embed one.
   static String get googleClientFile => p.join(configDir, 'google-oauth-client.json');
+
+  /// Directory for user cache (`$XDG_CACHE_HOME/plume`).
+  static String get cacheDir {
+    final xdg = Platform.environment['XDG_CACHE_HOME'];
+    final base = (xdg != null && xdg.isNotEmpty) ? xdg : p.join(Platform.environment['HOME'] ?? '.', '.cache');
+    return p.join(base, 'plume');
+  }
+
+  /// Subdirectory for cached avatars.
+  static String get avatarCacheDir => p.join(cacheDir, 'avatars');
 }
 
 /// A Google OAuth "Desktop app" client.

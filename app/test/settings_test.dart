@@ -131,6 +131,44 @@ void main() {
     });
   });
 
+  group('AppSettings avatar preferences', () {
+    test('defaults to showSenderAvatars true, fetchDomainFavicons true, enableGravatar false', () {
+      const settings = AppSettings();
+      expect(settings.showSenderAvatars, isTrue);
+      expect(settings.fetchDomainFavicons, isTrue);
+      expect(settings.enableGravatar, isFalse);
+    });
+
+    test('serializes and deserializes correctly', () {
+      const original = AppSettings(
+        showSenderAvatars: false,
+        fetchDomainFavicons: false,
+        enableGravatar: true,
+      );
+      final json = original.toJson();
+      expect(json['showSenderAvatars'], isFalse);
+      expect(json['fetchDomainFavicons'], isFalse);
+      expect(json['enableGravatar'], isTrue);
+
+      final restored = AppSettings.fromJson(json);
+      expect(restored.showSenderAvatars, isFalse);
+      expect(restored.fetchDomainFavicons, isFalse);
+      expect(restored.enableGravatar, isTrue);
+    });
+
+    test('copyWith updates avatar options', () {
+      const original = AppSettings();
+      final updated = original.copyWith(
+        showSenderAvatars: false,
+        fetchDomainFavicons: false,
+        enableGravatar: true,
+      );
+      expect(updated.showSenderAvatars, isFalse);
+      expect(updated.fetchDomainFavicons, isFalse);
+      expect(updated.enableGravatar, isTrue);
+    });
+  });
+
   group('MailEngine sync intervals', () {
     test('dynamically updates active runtime intervals', () async {
       final store = DriftMailStore.inMemory();

@@ -58,6 +58,7 @@ final class Account {
     AccountStatus? status,
     String? signature,
     bool clearSignature = false,
+    bool clearAvatarUrl = false,
     Map<String, Object?>? providerConfig,
   }) =>
       Account(
@@ -65,7 +66,7 @@ final class Account {
         provider: provider,
         email: email ?? this.email,
         displayName: displayName ?? this.displayName,
-        avatarUrl: avatarUrl ?? this.avatarUrl,
+        avatarUrl: clearAvatarUrl ? null : (avatarUrl ?? this.avatarUrl),
         color: color ?? this.color,
         sortOrder: sortOrder ?? this.sortOrder,
         status: status ?? this.status,

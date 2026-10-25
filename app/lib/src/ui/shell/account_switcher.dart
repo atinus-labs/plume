@@ -6,6 +6,7 @@ import 'package:plume_design/plume_design.dart';
 
 import '../../state/mail.dart';
 import '../../state/navigation.dart';
+import '../../state/avatars.dart';
 import '../onboarding/add_account.dart';
 
 /// Picks which account the navigation shows, including the unified view.
@@ -41,7 +42,7 @@ class _AccountSwitcherState extends ConsumerState<AccountSwitcher> {
         : MorphAvatar(
             name: account.displayName,
             colorKey: account.email,
-            image: account.avatarUrl == null ? null : NetworkImage(account.avatarUrl!),
+            image: ref.watch(accountAvatarProvider(account)).value,
             size: size,
           );
 
@@ -198,14 +199,14 @@ class _AccountItem extends StatelessWidget {
 }
 
 /// Up to three overlapping account avatars for the unified view.
-class _StackedAvatars extends StatelessWidget {
+class _StackedAvatars extends ConsumerWidget {
   const _StackedAvatars({required this.accounts, required this.size});
 
   final List<Account> accounts;
   final double size;
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
     final scheme = Theme.of(context).colorScheme;
     if (accounts.length <= 1) {
       return SizedBox.square(
@@ -229,7 +230,7 @@ class _StackedAvatars extends StatelessWidget {
               top: i.isEven ? 0 : size - small,
               child: DecoratedBox(
                 decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: scheme.surfaceContainerHigh, width: 2)),
-                child: MorphAvatar(name: shown[i].displayName, colorKey: shown[i].email, size: small - 4),
+                child: MorphAvatar(name: shown[i].displayName, colorKey: shown[i].email, image: ref.watch(accountAvatarProvider(shown[i])).value, size: small - 4),
               ),
             ),
         ],

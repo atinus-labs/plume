@@ -15,7 +15,33 @@ Future<Uint8List> renderAvatarRgba({
   required String key,
   required ColorScheme scheme,
   int size = 96,
+  Uint8List? imageBytes,
 }) async {
+  if (imageBytes != null && imageBytes.isNotEmpty) {
+    try {
+      final codec = await ui.instantiateImageCodec(
+        imageBytes,
+        targetWidth: size,
+        targetHeight: size,
+      );
+      final frame = await codec.getNextFrame();
+      codec.dispose();
+      final recorder = ui.PictureRecorder();
+      final canvas = Canvas(recorder);
+      final rect = Rect.fromLTWH(0, 0, size.toDouble(), size.toDouble());
+      canvas.clipPath(Shapes.circle.toPath(rect));
+      canvas.drawImageRect(
+        frame.image,
+        Rect.fromLTWH(0, 0, frame.image.width.toDouble(), frame.image.height.toDouble()),
+        rect,
+        Paint()..isAntiAlias = true,
+      );
+      frame.image.dispose();
+      return await _toRgba(recorder, size, size);
+    } catch (_) {
+      // Fallback to initials below
+    }
+  }
   final tones = tonalPair(harmonize(colorForKey(key), scheme), Brightness.light);
   final recorder = ui.PictureRecorder();
   final canvas = Canvas(recorder);

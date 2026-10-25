@@ -5,6 +5,7 @@ import 'package:plume_core/plume_core.dart';
 import 'package:plume_design/plume_design.dart';
 
 import '../../state/navigation.dart';
+import '../../state/avatars.dart';
 import '../actions.dart';
 import '../common/format.dart';
 import 'thread_menu.dart';
@@ -99,6 +100,7 @@ class _ThreadTileState extends ConsumerState<ThreadTile> {
                     MorphAvatar(
                       name: sender?.displayName ?? '?',
                       colorKey: sender?.email ?? thread.id,
+                      image: sender?.email != null ? ref.watch(senderAvatarProvider(sender!.email)).value : null,
                       selected: selected,
                       size: 40,
                       onTap: () => ref.read(selectionProvider.notifier).toggle(thread.key),

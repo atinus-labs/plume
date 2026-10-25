@@ -10,6 +10,7 @@ import 'package:plume_design/plume_design.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../state/services.dart';
+import '../../state/avatars.dart';
 import '../actions.dart';
 import '../common/format.dart';
 import '../compose/compose_host.dart';
@@ -74,7 +75,7 @@ class _MessageCardState extends ConsumerState<MessageCard> {
         padding: const EdgeInsets.fromLTRB(20, 14, 20, 14),
         child: Row(
           children: [
-            MorphAvatar(name: from?.displayName ?? '?', colorKey: from?.email ?? m.id, size: 32),
+            MorphAvatar(name: from?.displayName ?? '?', colorKey: from?.email ?? m.id, image: from?.email != null ? ref.watch(senderAvatarProvider(from!.email)).value : null, size: 32),
             const SizedBox(width: 14),
             SizedBox(
               width: 160,
@@ -114,7 +115,7 @@ class _MessageCardState extends ConsumerState<MessageCard> {
             child: Row(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                MorphAvatar(name: from?.displayName ?? '?', colorKey: from?.email ?? m.id, size: 40),
+                MorphAvatar(name: from?.displayName ?? '?', colorKey: from?.email ?? m.id, image: from?.email != null ? ref.watch(senderAvatarProvider(from!.email)).value : null, size: 40),
                 const SizedBox(width: 14),
                 Expanded(
                   child: Column(

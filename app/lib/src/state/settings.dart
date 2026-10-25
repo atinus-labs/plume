@@ -43,6 +43,9 @@ final class AppSettings {
     this.foregroundSyncMinutes = 2,
     this.backgroundSyncMinutes = 10,
     this.mailListPosition = MailListPosition.left,
+    this.showSenderAvatars = true,
+    this.fetchDomainFavicons = true,
+    this.enableGravatar = false,
   });
 
   final ThemeMode themeMode;
@@ -77,6 +80,15 @@ final class AppSettings {
   /// Position of the message list pane relative to the reader pane on wide layouts.
   final MailListPosition mailListPosition;
 
+  /// Whether to display sender profile pictures.
+  final bool showSenderAvatars;
+
+  /// Whether to fetch domain favicons/logos for organizational senders.
+  final bool fetchDomainFavicons;
+
+  /// Whether to query Gravatar (SHA-256) for sender and account avatars.
+  final bool enableGravatar;
+
   bool get mailListOnRight => mailListPosition == MailListPosition.right;
 
   Duration get foregroundSyncInterval => Duration(minutes: foregroundSyncMinutes);
@@ -101,6 +113,9 @@ final class AppSettings {
     int? backgroundSyncMinutes,
     MailListPosition? mailListPosition,
     bool? mailListOnRight,
+    bool? showSenderAvatars,
+    bool? fetchDomainFavicons,
+    bool? enableGravatar,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -123,6 +138,9 @@ final class AppSettings {
             (mailListOnRight != null
                 ? (mailListOnRight ? MailListPosition.right : MailListPosition.left)
                 : this.mailListPosition),
+        showSenderAvatars: showSenderAvatars ?? this.showSenderAvatars,
+        fetchDomainFavicons: fetchDomainFavicons ?? this.fetchDomainFavicons,
+        enableGravatar: enableGravatar ?? this.enableGravatar,
       );
 
   Map<String, Object?> toJson() => {
@@ -143,6 +161,9 @@ final class AppSettings {
         'foregroundSyncMinutes': foregroundSyncMinutes,
         'backgroundSyncMinutes': backgroundSyncMinutes,
         'mailListPosition': mailListPosition.name,
+        'showSenderAvatars': showSenderAvatars,
+        'fetchDomainFavicons': fetchDomainFavicons,
+        'enableGravatar': enableGravatar,
       };
 
   static AppSettings fromJson(Map<String, Object?> j) {
@@ -171,6 +192,9 @@ final class AppSettings {
         j['mailListPosition'],
         (j['mailListOnRight'] as bool?) == true ? MailListPosition.right : d.mailListPosition,
       ),
+      showSenderAvatars: j['showSenderAvatars'] as bool? ?? d.showSenderAvatars,
+      fetchDomainFavicons: j['fetchDomainFavicons'] as bool? ?? d.fetchDomainFavicons,
+      enableGravatar: j['enableGravatar'] as bool? ?? d.enableGravatar,
     );
   }
 }

@@ -8,6 +8,7 @@ import 'package:plume_design/plume_design.dart';
 import 'package:plume_mime/plume_mime.dart' show MailtoLink;
 
 import '../services/avatar_renderer.dart';
+import '../state/avatars.dart';
 import '../services/desktop.dart';
 import '../state/mail.dart';
 import '../state/navigation.dart';
@@ -162,7 +163,16 @@ class _DesktopBridgeState extends ConsumerState<DesktopBridge> {
       if (messages.length <= 3) {
         for (final m in messages) {
           final sender = m.from?.displayName ?? 'Unknown sender';
-          final avatar = await renderAvatarRgba(name: sender, key: m.from?.email ?? m.id, scheme: scheme, size: 96);
+          final senderEmail = m.from?.email;
+          final avatarService = ref.read(avatarServiceProvider);
+          final imageBytes = senderEmail != null ? avatarService.getCachedBytes(senderEmail) : null;
+          final avatar = await renderAvatarRgba(
+            name: sender,
+            key: m.from?.email ?? m.id,
+            scheme: scheme,
+            size: 96,
+            imageBytes: imageBytes,
+          );
           await _desktop.notify(MailNotification(
             accountId: event.accountId,
             title: sender,
