@@ -538,7 +538,7 @@ class _SelectionBar extends ConsumerWidget {
 }
 
 /// The list grouped into date sections of connected rows.
-class _GroupedList extends StatelessWidget {
+class _GroupedList extends StatefulWidget {
   const _GroupedList({
     required this.threads,
     required this.accounts,
@@ -556,53 +556,134 @@ class _GroupedList extends StatelessWidget {
   final Widget? footer;
 
   @override
+  State<_GroupedList> createState() => _GroupedListState();
+}
+
+class _GroupedListState extends State<_GroupedList> {
+  late final ValueNotifier<({double top, double bottom})> _factors;
+
+  @override
+  void initState() {
+    super.initState();
+    _factors = ValueNotifier((top: 0.0, bottom: 0.0));
+    widget.controller.addListener(_onScroll);
+    WidgetsBinding.instance.addPostFrameCallback((_) => _updateFromPosition());
+  }
+
+  @override
+  void didUpdateWidget(_GroupedList oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.controller != oldWidget.controller) {
+      oldWidget.controller.removeListener(_onScroll);
+      widget.controller.addListener(_onScroll);
+    }
+    WidgetsBinding.instance.addPostFrameCallback((_) => _updateFromPosition());
+  }
+
+  @override
+  void dispose() {
+    widget.controller.removeListener(_onScroll);
+    _factors.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    _updateFromPosition();
+  }
+
+  void _updateFromPosition() {
+    if (!mounted || !widget.controller.hasClients) return;
+    final pos = widget.controller.position;
+    _updateFactors(pos.extentBefore, pos.extentAfter);
+  }
+
+  void _updateFactors(double extentBefore, double extentAfter) {
+    const fadeHeight = 32.0;
+    final top = (extentBefore / fadeHeight).clamp(0.0, 1.0);
+    final bottom = (extentAfter / fadeHeight).clamp(0.0, 1.0);
+    if ((top - _factors.value.top).abs() > 0.001 || (bottom - _factors.value.bottom).abs() > 0.001) {
+      _factors.value = (top: top, bottom: bottom);
+    }
+  }
+
+  @override
   Widget build(BuildContext context) {
     final entries = <Object>[];
-    if (grouped) {
+    if (widget.grouped) {
       String? current;
       var groupStart = 0;
-      for (var i = 0; i < threads.length; i++) {
-        final label = dateGroup(threads[i].lastDate);
+      for (var i = 0; i < widget.threads.length; i++) {
+        final label = dateGroup(widget.threads[i].lastDate);
         if (label != current) {
           if (current != null) _closeGroup(entries, groupStart);
           entries.add(label);
           groupStart = entries.length;
           current = label;
         }
-        entries.add(threads[i]);
+        entries.add(widget.threads[i]);
       }
       _closeGroup(entries, groupStart);
     } else {
-      entries.addAll(threads);
+      entries.addAll(widget.threads);
       _closeGroup(entries, 0);
     }
 
     final theme = Theme.of(context);
     return Scrollbar(
-      controller: controller,
-      child: ListView.builder(
-        controller: controller,
-        padding: const EdgeInsets.fromLTRB(8, 0, 8, 24),
-        itemCount: entries.length + (footer == null ? 0 : 1),
-        itemBuilder: (context, i) {
-          if (i == entries.length) return footer!;
-          final entry = entries[i];
-          if (entry is String) {
-            return Padding(
-              padding: EdgeInsets.fromLTRB(16, i == 0 ? 4 : 18, 16, 8),
-              child: Text(entry, style: theme.textTheme.labelLargeEmphasized.copyWith(color: theme.colorScheme.primary)),
+      controller: widget.controller,
+      child: NotificationListener<ScrollNotification>(
+        onNotification: (notification) {
+          if (notification.metrics.axis == Axis.vertical) {
+            _updateFactors(
+              notification.metrics.extentBefore,
+              notification.metrics.extentAfter,
             );
           }
-          final item = entry as _Positioned;
-          return ThreadTile(
-            key: ValueKey(item.thread.key),
-            thread: item.thread,
-            index: item.index,
-            groupSize: item.size,
-            account: accounts[item.thread.accountId],
-            showAccountDot: unified,
-          );
+          return false;
         },
+        child: ValueListenableBuilder<({double top, double bottom})>(
+          valueListenable: _factors,
+          builder: (context, factors, child) {
+            return ClipPath(
+              clipper: _GroupedListClipper(
+                radius: Corners.largeIncreased,
+                horizontalInset: 8,
+                topFactor: factors.top,
+                bottomFactor: factors.bottom,
+              ),
+              child: ShaderMask(
+                shaderCallback: (bounds) => _createFadeShader(bounds, factors.top, factors.bottom),
+                blendMode: BlendMode.dstIn,
+                child: child!,
+              ),
+            );
+          },
+          child: ListView.builder(
+            controller: widget.controller,
+            clipBehavior: Clip.none,
+            padding: const EdgeInsets.fromLTRB(8, 0, 8, 24),
+            itemCount: entries.length + (widget.footer == null ? 0 : 1),
+            itemBuilder: (context, i) {
+              if (i == entries.length) return widget.footer!;
+              final entry = entries[i];
+              if (entry is String) {
+                return Padding(
+                  padding: EdgeInsets.fromLTRB(16, i == 0 ? 4 : 18, 16, 8),
+                  child: Text(entry, style: theme.textTheme.labelLargeEmphasized.copyWith(color: theme.colorScheme.primary)),
+                );
+              }
+              final item = entry as _Positioned;
+              return ThreadTile(
+                key: ValueKey(item.thread.key),
+                thread: item.thread,
+                index: item.index,
+                groupSize: item.size,
+                account: widget.accounts[item.thread.accountId],
+                showAccountDot: widget.unified,
+              );
+            },
+          ),
+        ),
       ),
     );
   }
@@ -614,6 +695,83 @@ class _GroupedList extends StatelessWidget {
       entries[i] = _Positioned(entries[i] as ThreadSummary, i - start, size);
     }
   }
+}
+
+Shader _createFadeShader(Rect bounds, double topFactor, double bottomFactor) {
+  if (bounds.height <= 0 || bounds.width <= 0) {
+    return const LinearGradient(colors: [Colors.white, Colors.white]).createShader(bounds);
+  }
+  const fadeHeight = 32.0;
+  final topFraction = (fadeHeight / bounds.height).clamp(0.0, 0.4);
+  final bottomFraction = 1.0 - (fadeHeight / bounds.height).clamp(0.0, 0.4);
+
+  if (topFactor <= 0.0 && bottomFactor <= 0.0) {
+    return const LinearGradient(colors: [Colors.white, Colors.white]).createShader(bounds);
+  }
+
+  return LinearGradient(
+    begin: Alignment.topCenter,
+    end: Alignment.bottomCenter,
+    colors: [
+      Colors.white.withValues(alpha: 1.0 - topFactor),
+      Colors.white,
+      Colors.white,
+      Colors.white.withValues(alpha: 1.0 - bottomFactor),
+    ],
+    stops: [
+      0.0,
+      topFraction,
+      bottomFraction,
+      1.0,
+    ],
+  ).createShader(bounds);
+}
+
+class _GroupedListClipper extends CustomClipper<Path> {
+  const _GroupedListClipper({
+    required this.radius,
+    required this.horizontalInset,
+    required this.topFactor,
+    required this.bottomFactor,
+  });
+
+  final double radius;
+  final double horizontalInset;
+  final double topFactor;
+  final double bottomFactor;
+
+  @override
+  Path getClip(Size size) {
+    if (size.width <= 0 || size.height <= 0) return Path();
+
+    final topR = Radius.circular(radius * topFactor);
+    final bottomR = Radius.circular(radius * bottomFactor);
+
+    final left = horizontalInset;
+    final right = size.width - horizontalInset;
+    if (right <= left) {
+      return Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
+    }
+
+    final rect = Rect.fromLTRB(left, 0, right, size.height);
+    return Path()
+      ..addRRect(
+        RRect.fromRectAndCorners(
+          rect,
+          topLeft: topR,
+          topRight: topR,
+          bottomLeft: bottomR,
+          bottomRight: bottomR,
+        ),
+      );
+  }
+
+  @override
+  bool shouldReclip(_GroupedListClipper oldClipper) =>
+      radius != oldClipper.radius ||
+      horizontalInset != oldClipper.horizontalInset ||
+      topFactor != oldClipper.topFactor ||
+      bottomFactor != oldClipper.bottomFactor;
 }
 
 final class _Positioned {
