@@ -33,6 +33,7 @@ dependencies:
     path: ../packages/plume_linux
   plume_store:
     path: ../packages/plume_store
+  sqlite3_flutter_libs: ^0.6.0+eol
   url_launcher: ^6.3.3
 
 dev_dependencies:
