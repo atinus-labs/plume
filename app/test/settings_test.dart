@@ -9,6 +9,8 @@ import 'package:plume/src/services/secret_store.dart';
 import 'package:plume/src/state/mail.dart';
 import 'package:plume/src/state/services.dart';
 import 'package:plume/src/state/settings.dart';
+import 'package:plume/src/ui/compose/compose_host.dart';
+import 'package:plume/src/ui/compose/compose_panel.dart';
 import 'package:plume/src/ui/desktop_bridge.dart';
 import 'package:plume/src/ui/reader/reader_pane.dart';
 import 'package:plume/src/ui/settings/settings_page.dart';
@@ -418,6 +420,120 @@ void main() {
       expect(navRailHostRect.left, lessThan(threadListRect.left));
       // Mail list is on the left (between nav rail and reader)
       expect(threadListRect.left, lessThan(readerPaneRect.left));
+    });
+
+    testWidgets('docks compose popup on left when mail list is on right', (tester) async {
+      final store = DriftMailStore.inMemory();
+      addTearDown(() => tester.runAsync(store.close));
+
+      final service = AccountsService(store: store, connectors: const []);
+      final engine = MailEngine(
+        store: store,
+        factories: service.factories,
+        tokenSourceFor: service.tokenSourceFor,
+      );
+
+      final container = ProviderContainer(
+        overrides: [
+          servicesProvider.overrideWithValue(Services(
+            store: store,
+            engine: engine,
+            desktop: HeadlessDesktop(),
+            secrets: _NoSecrets(),
+            accounts: service,
+            initialSettings: const AppSettings(mailListPosition: MailListPosition.right),
+          )),
+          accountsProvider.overrideWith((ref) => Stream.value(const [_account])),
+          syncStatusProvider.overrideWith((ref) => Stream.value(const {})),
+          hasCategoriesProvider.overrideWithValue(false),
+          unreadCountProvider.overrideWith((ref, filter) => Stream.value(0)),
+          mailboxesProvider.overrideWith((ref, id) => Stream.value(const <Mailbox>[])),
+          usesFoldersProvider.overrideWith((ref, id) => false),
+          visibleThreadsProvider.overrideWithValue(const AsyncValue.data(<ThreadSummary>[])),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          theme: PlumeTheme.build(brightness: Brightness.light, seed: PlumeTheme.defaultSeed, contrast: 0.0),
+          home: const DesktopBridge(child: HomeShell()),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      container.read(composeProvider.notifier).newMessage();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ComposePanel), findsOneWidget);
+      final composeRect = tester.getRect(find.byType(ComposePanel));
+      final navRailRect = tester.getRect(find.byType(NavRailHost));
+      final threadListRect = tester.getRect(find.byType(ThreadListPane));
+
+      // Compose popup starts from left (after nav rail) instead of right
+      expect(composeRect.left, greaterThanOrEqualTo(navRailRect.right));
+      expect(composeRect.left, closeTo(navRailRect.right + 16.0, 1.0));
+      expect(composeRect.right, lessThan(threadListRect.left));
+    });
+
+    testWidgets('docks compose popup on right by default', (tester) async {
+      final store = DriftMailStore.inMemory();
+      addTearDown(() => tester.runAsync(store.close));
+
+      final service = AccountsService(store: store, connectors: const []);
+      final engine = MailEngine(
+        store: store,
+        factories: service.factories,
+        tokenSourceFor: service.tokenSourceFor,
+      );
+
+      final container = ProviderContainer(
+        overrides: [
+          servicesProvider.overrideWithValue(Services(
+            store: store,
+            engine: engine,
+            desktop: HeadlessDesktop(),
+            secrets: _NoSecrets(),
+            accounts: service,
+            initialSettings: const AppSettings(mailListPosition: MailListPosition.left),
+          )),
+          accountsProvider.overrideWith((ref) => Stream.value(const [_account])),
+          syncStatusProvider.overrideWith((ref) => Stream.value(const {})),
+          hasCategoriesProvider.overrideWithValue(false),
+          unreadCountProvider.overrideWith((ref, filter) => Stream.value(0)),
+          mailboxesProvider.overrideWith((ref, id) => Stream.value(const <Mailbox>[])),
+          usesFoldersProvider.overrideWith((ref, id) => false),
+          visibleThreadsProvider.overrideWithValue(const AsyncValue.data(<ThreadSummary>[])),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      tester.view.physicalSize = const Size(1400, 900);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+
+      await tester.pumpWidget(UncontrolledProviderScope(
+        container: container,
+        child: MaterialApp(
+          theme: PlumeTheme.build(brightness: Brightness.light, seed: PlumeTheme.defaultSeed, contrast: 0.0),
+          home: const DesktopBridge(child: HomeShell()),
+        ),
+      ));
+      await tester.pumpAndSettle();
+
+      container.read(composeProvider.notifier).newMessage();
+      await tester.pumpAndSettle();
+
+      expect(find.byType(ComposePanel), findsOneWidget);
+      final composeRect = tester.getRect(find.byType(ComposePanel));
+
+      // Compose popup is docked on the right side
+      expect(composeRect.right, closeTo(1400.0 - 16.0, 1.0));
     });
   });
 }

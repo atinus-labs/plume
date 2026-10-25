@@ -24,10 +24,11 @@ const _maxAttachmentBytes = 25 * 1024 * 1024;
 
 /// A compose window.
 class ComposePanel extends ConsumerStatefulWidget {
-  const ComposePanel({super.key, required this.request, required this.maximized});
+  const ComposePanel({super.key, required this.request, required this.maximized, this.dockLeft = false});
 
   final ComposeRequest request;
   final bool maximized;
+  final bool dockLeft;
 
   @override
   ConsumerState<ComposePanel> createState() => _ComposePanelState();
@@ -354,12 +355,16 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
             ComposeMode.forward => 'Forward',
           };
 
+    final alignment = widget.maximized
+        ? Alignment.center
+        : (widget.dockLeft ? Alignment.bottomLeft : Alignment.bottomRight);
+
     return TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
       duration: Spring.spatial.duration,
       curve: Spring.spatial.curve,
       builder: (context, t, child) => Transform(
-        alignment: Alignment.bottomRight,
+        alignment: alignment,
         transform: Matrix4.identity()
           ..translateByDouble(0, (1 - t) * 40, 0, 1)
           ..scaleByDouble(0.92 + 0.08 * t, 0.92 + 0.08 * t, 1, 1),

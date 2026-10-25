@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
 import 'package:plume_core/plume_core.dart';
+import 'package:plume_design/plume_design.dart';
 import 'package:plume_mime/plume_mime.dart' show MailtoLink;
 
 import '../../state/mail.dart';
 import '../../state/navigation.dart';
+import '../../state/settings.dart';
 import 'compose_panel.dart';
 
 enum ComposeMode { fresh, reply, replyAll, forward }
@@ -217,25 +219,47 @@ class ComposeHost extends ConsumerWidget {
     final docked = requests.where((r) => r.id != maximized).toList();
     final big = requests.where((r) => r.id == maximized).firstOrNull;
     final scheme = Theme.of(context).colorScheme;
+    final settings = ref.watch(settingsProvider);
 
     return Positioned.fill(
-      child: Stack(
-        children: [
-          Positioned(
-            right: 16,
-            bottom: 0,
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                for (final r in docked)
-                  Padding(
-                    padding: const EdgeInsets.only(left: 12),
-                    child: ComposePanel(key: keyFor(r.id), request: r, maximized: false),
-                  ),
-              ],
-            ),
-          ),
+      child: LayoutBuilder(
+        builder: (context, constraints) {
+          final width = constraints.maxWidth;
+          final cls = WindowClass.of(width);
+          final dockLeft = settings.mailListOnRight;
+          final railExpanded = settings.railExpanded && width >= 1180;
+          final railWidth = switch (cls) {
+            WindowClass.compact => 0.0,
+            WindowClass.medium => 88.0,
+            _ => railExpanded ? 272.0 : 88.0,
+          };
+          final leftOffset = railWidth + 16.0;
+
+          return Stack(
+            children: [
+              Positioned(
+                left: dockLeft ? leftOffset : null,
+                right: dockLeft ? null : 16,
+                bottom: 0,
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.end,
+                  children: [
+                    if (!dockLeft)
+                      for (final r in docked)
+                        Padding(
+                          padding: const EdgeInsets.only(left: 12),
+                          child: ComposePanel(key: keyFor(r.id), request: r, maximized: false, dockLeft: false),
+                        )
+                    else
+                      for (final r in docked.reversed)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 12),
+                          child: ComposePanel(key: keyFor(r.id), request: r, maximized: false, dockLeft: true),
+                        ),
+                  ],
+                ),
+              ),
           if (big != null) ...[
             Positioned.fill(
               child: GestureDetector(
@@ -253,7 +277,9 @@ class ComposeHost extends ConsumerWidget {
             ),
           ],
         ],
-      ),
-    );
+      );
+    },
+  ),
+);
   }
 }
