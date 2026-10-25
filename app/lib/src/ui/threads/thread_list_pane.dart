@@ -84,10 +84,10 @@ class _ThreadListPaneState extends ConsumerState<ThreadListPane> {
           duration: Spring.effects.duration,
           child: (syncing && !initialSync) || search.searchingServer
               ? const Padding(
-                  padding: EdgeInsets.fromLTRB(16, 0, 16, 6),
+                  padding: EdgeInsets.symmetric(horizontal: 16, vertical: 8),
                   child: WavyProgressIndicator(height: 8),
                 )
-              : const SizedBox(height: 14),
+              : const SizedBox(height: 24),
         ),
         Expanded(
           child: threads.when(
