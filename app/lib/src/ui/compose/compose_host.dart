@@ -21,6 +21,8 @@ final class ComposeRequest {
     this.bcc = const [],
     this.subject = '',
     this.body = '',
+    this.html,
+    this.plainText = false,
     this.quoted,
     this.threadId,
     this.inReplyTo,
@@ -38,6 +40,12 @@ final class ComposeRequest {
   final List<Address> bcc;
   final String subject;
   final String body;
+
+  /// Formatted body; takes the place of [body] when set.
+  final String? html;
+
+  /// Compose in plain text: no formatting and no HTML part.
+  final bool plainText;
 
   /// The original message, quoted below the reply.
   final Message? quoted;
@@ -120,6 +128,8 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
       bcc: message.bcc,
       subject: message.subject,
       body: message.textBody,
+      html: message.htmlBody,
+      plainText: message.htmlBody == null,
       threadId: message.threadId,
       inReplyTo: message.inReplyTo,
       references: message.references,

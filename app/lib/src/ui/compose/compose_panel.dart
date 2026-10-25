@@ -17,6 +17,7 @@ import '../actions.dart';
 import '../common/format.dart';
 import 'compose_host.dart';
 import 'recipient_field.dart';
+import 'rich_text.dart';
 
 /// Largest total attachment size most providers accept (Gmail: 25 MB).
 const _maxAttachmentBytes = 25 * 1024 * 1024;
@@ -39,8 +40,12 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
   late List<Address> _bcc = widget.request.bcc;
   late bool _showCc = widget.request.cc.isNotEmpty || widget.request.bcc.isNotEmpty;
   late final _subject = TextEditingController(text: widget.request.subject);
-  late final _body = TextEditingController(text: widget.request.body);
+  late final _body = widget.request.html != null
+      ? RichTextController.fromHtml(widget.request.html!)
+      : RichTextController(text: widget.request.body);
   final _bodyFocus = FocusNode();
+  late bool _plainText = widget.request.plainText;
+  bool _showFormatting = true;
   final _toKey = GlobalKey<RecipientFieldState>();
   final _ccKey = GlobalKey<RecipientFieldState>();
   final _bccKey = GlobalKey<RecipientFieldState>();
@@ -159,7 +164,7 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     final account = accounts[_accountId] ?? accounts.values.firstOrNull;
     if (account == null) return null;
     final quote = _quotedText;
-    final typed = _body.text.trimRight();
+    final typed = _body.toPlainText();
     final signature = account.signature?.trim();
     final textParts = [
       typed,
@@ -174,7 +179,9 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
       bcc: _bcc,
       subject: _subject.text.trim(),
       textBody: textParts.join('\n'),
-      htmlBody: _toHtml(typed, signature, quote, quoteIsForward: widget.request.mode == ComposeMode.forward),
+      htmlBody: _plainText
+          ? null
+          : _toHtml(_body.toHtml(), signature, quote, quoteIsForward: widget.request.mode == ComposeMode.forward),
       attachments: _attachments,
       threadId: widget.request.threadId,
       inReplyTo: widget.request.inReplyTo,
@@ -272,6 +279,62 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     }
     setState(() => _attachments = [..._attachments, ...added]);
     _scheduleSave();
+  }
+
+  // Formatting -----------------------------------------------------------------
+
+  /// Runs a formatting [action] on the body and returns focus to it.
+  void _format(void Function() action) {
+    if (_plainText) return;
+    action();
+    _bodyFocus.requestFocus();
+  }
+
+  Future<void> _editLink() async {
+    final sel = _body.selection;
+    if (_plainText || !sel.isValid) return;
+    final existing = _body.linkRange();
+    final range = existing ?? TextRange(start: sel.start, end: sel.end);
+    final result = await showDialog<(String, String?)>(
+      context: context,
+      builder: (context) => _LinkDialog(
+        label: range.textInside(_body.text),
+        url: existing == null ? '' : _body.linkAt(existing.start) ?? '',
+        canRemove: existing != null,
+      ),
+    );
+    if (result != null && mounted) _body.setLink(range, result.$1, result.$2);
+    _bodyFocus.requestFocus();
+  }
+
+  Future<void> _togglePlainText() async {
+    if (!_plainText &&
+        _body.hasFormatting &&
+        !await _confirm('Switching to plain text removes the formatting from this message.', 'Switch')) {
+      return;
+    }
+    setState(() => _plainText = !_plainText);
+    if (_plainText) _body.clearAllFormatting();
+    _scheduleSave();
+  }
+
+  Map<ShortcutActivator, VoidCallback> get _formatShortcuts {
+    if (_plainText) return const {};
+    void Function() style(int flag) => () => _body.toggle(flag);
+    void Function() list(ListKind kind) => () => _body.toggleList(kind);
+    return {
+      const SingleActivator(LogicalKeyboardKey.keyB, control: true): style(InlineStyle.bold),
+      const SingleActivator(LogicalKeyboardKey.keyI, control: true): style(InlineStyle.italic),
+      const SingleActivator(LogicalKeyboardKey.keyU, control: true): style(InlineStyle.underline),
+      const SingleActivator(LogicalKeyboardKey.keyX, control: true, shift: true): style(InlineStyle.strike),
+      const SingleActivator(LogicalKeyboardKey.keyK, control: true): () => unawaited(_editLink()),
+      // Shifted digits may arrive as the digit or as its symbol.
+      const SingleActivator(LogicalKeyboardKey.digit7, control: true, shift: true): list(ListKind.numbered),
+      const SingleActivator(LogicalKeyboardKey.ampersand, control: true, shift: true): list(ListKind.numbered),
+      const SingleActivator(LogicalKeyboardKey.digit8, control: true, shift: true): list(ListKind.bullet),
+      const SingleActivator(LogicalKeyboardKey.asterisk, control: true, shift: true): list(ListKind.bullet),
+      const SingleActivator(LogicalKeyboardKey.backslash, control: true): _body.clearFormatting,
+    };
   }
 
   // UI -------------------------------------------------------------------------
@@ -398,20 +461,23 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
               children: [
-                TextField(
-                  controller: _body,
-                  focusNode: _bodyFocus,
-                  maxLines: null,
-                  minLines: 8,
-                  keyboardType: TextInputType.multiline,
-                  style: theme.textTheme.bodyLarge?.copyWith(height: 1.5),
-                  decoration: const InputDecoration(
-                    hintText: 'Write your message',
-                    filled: false,
-                    border: InputBorder.none,
-                    enabledBorder: InputBorder.none,
-                    focusedBorder: InputBorder.none,
-                    contentPadding: EdgeInsets.zero,
+                CallbackShortcuts(
+                  bindings: _formatShortcuts,
+                  child: TextField(
+                    controller: _body,
+                    focusNode: _bodyFocus,
+                    maxLines: null,
+                    minLines: 8,
+                    keyboardType: TextInputType.multiline,
+                    style: theme.textTheme.bodyLarge?.copyWith(height: 1.5),
+                    decoration: const InputDecoration(
+                      hintText: 'Write your message',
+                      filled: false,
+                      border: InputBorder.none,
+                      enabledBorder: InputBorder.none,
+                      focusedBorder: InputBorder.none,
+                      contentPadding: EdgeInsets.zero,
+                    ),
                   ),
                 ),
                 if (_quotedText != null) ...[
@@ -461,6 +527,8 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
               ],
             ),
           ),
+        if (_showFormatting && !_plainText)
+          _FormatBar(controller: _body, onFormat: _format, onLink: () => unawaited(_editLink())),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 12, 14),
           child: Row(
@@ -472,11 +540,35 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
                 label: const Text('Send'),
               ),
               const SizedBox(width: 6),
+              IconButton(
+                tooltip: _plainText ? 'Formatting is off in plain text mode' : 'Formatting options',
+                isSelected: _showFormatting && !_plainText,
+                onPressed: _plainText ? null : () => setState(() => _showFormatting = !_showFormatting),
+                icon: const Icon(Symbols.text_format_rounded),
+              ),
               IconButton(tooltip: 'Attach files', onPressed: _attach, icon: const Icon(Symbols.attach_file_rounded)),
               const SizedBox(width: 8),
-              Text(_saveState, style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
-              const Spacer(),
+              Expanded(
+                child: Text(_saveState,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
+              ),
               Text('Ctrl+Enter to send', style: theme.textTheme.labelSmall?.copyWith(color: scheme.outline)),
+              MenuAnchor(
+                menuChildren: [
+                  CheckboxMenuButton(
+                    value: _plainText,
+                    onChanged: (_) => unawaited(_togglePlainText()),
+                    child: const Text('Plain text mode'),
+                  ),
+                ],
+                builder: (context, controller, _) => IconButton(
+                  tooltip: 'More options',
+                  onPressed: () => controller.isOpen ? controller.close() : controller.open(),
+                  icon: const Icon(Symbols.more_vert_rounded),
+                ),
+              ),
               IconButton(tooltip: 'Discard draft', onPressed: _discard, icon: const Icon(Symbols.delete_rounded)),
             ],
           ),
@@ -536,6 +628,150 @@ class _TitleBar extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+}
+
+/// Formatting buttons above the compose actions, like Gmail's formatting bar.
+class _FormatBar extends StatelessWidget {
+  const _FormatBar({required this.controller, required this.onFormat, required this.onLink});
+
+  final RichTextController controller;
+  final void Function(void Function() action) onFormat;
+  final VoidCallback onLink;
+
+  @override
+  Widget build(BuildContext context) {
+    final scheme = Theme.of(context).colorScheme;
+    final selectedStyle = ButtonStyle(
+      backgroundColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected) ? scheme.secondaryContainer : null),
+      foregroundColor: WidgetStateProperty.resolveWith(
+          (states) => states.contains(WidgetState.selected) ? scheme.onSecondaryContainer : scheme.onSurfaceVariant),
+    );
+    Widget button(IconData icon, String tooltip, bool selected, VoidCallback onPressed) => IconButton(
+          tooltip: tooltip,
+          isSelected: selected,
+          style: selectedStyle,
+          visualDensity: VisualDensity.compact,
+          iconSize: 20,
+          onPressed: onPressed,
+          icon: Icon(icon),
+        );
+    Widget gap() => SizedBox(
+        height: 20, child: VerticalDivider(width: 12, color: scheme.outlineVariant.withValues(alpha: 0.6)));
+
+    // Clicking a button must not take the selection away from the body.
+    return TextFieldTapRegion(
+      child: Container(
+        alignment: Alignment.centerLeft,
+        padding: const EdgeInsets.fromLTRB(12, 2, 12, 0),
+        child: Material(
+          color: scheme.surfaceContainerHigh,
+          shape: const StadiumBorder(),
+          child: SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+            child: ListenableBuilder(
+              listenable: controller,
+              builder: (context, _) {
+                final list = controller.listKind();
+                Widget style(IconData icon, String tooltip, int flag) =>
+                    button(icon, tooltip, controller.isActive(flag), () => onFormat(() => controller.toggle(flag)));
+                return Row(
+                  children: [
+                    style(Symbols.format_bold_rounded, 'Bold (Ctrl+B)', InlineStyle.bold),
+                    style(Symbols.format_italic_rounded, 'Italic (Ctrl+I)', InlineStyle.italic),
+                    style(Symbols.format_underlined_rounded, 'Underline (Ctrl+U)', InlineStyle.underline),
+                    style(Symbols.strikethrough_s_rounded, 'Strikethrough (Ctrl+Shift+X)', InlineStyle.strike),
+                    gap(),
+                    button(Symbols.link_rounded, 'Insert link (Ctrl+K)', controller.linkRange() != null, onLink),
+                    gap(),
+                    button(Symbols.format_list_numbered_rounded, 'Numbered list (Ctrl+Shift+7)', list == ListKind.numbered,
+                        () => onFormat(() => controller.toggleList(ListKind.numbered))),
+                    button(Symbols.format_list_bulleted_rounded, 'Bulleted list (Ctrl+Shift+8)', list == ListKind.bullet,
+                        () => onFormat(() => controller.toggleList(ListKind.bullet))),
+                    gap(),
+                    button(Symbols.format_clear_rounded, 'Remove formatting (Ctrl+\\)', false,
+                        () => onFormat(controller.clearFormatting)),
+                  ],
+                );
+              },
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+/// Edits the text and address of a link.
+class _LinkDialog extends StatefulWidget {
+  const _LinkDialog({required this.label, required this.url, required this.canRemove});
+
+  final String label;
+  final String url;
+  final bool canRemove;
+
+  @override
+  State<_LinkDialog> createState() => _LinkDialogState();
+}
+
+class _LinkDialogState extends State<_LinkDialog> {
+  late final _label = TextEditingController(text: widget.label);
+  late final _url = TextEditingController(text: widget.url);
+
+  @override
+  void dispose() {
+    _label.dispose();
+    _url.dispose();
+    super.dispose();
+  }
+
+  String? get _link => normalizeLink(_url.text);
+
+  void _apply() {
+    final link = _link;
+    if (link == null) return;
+    Navigator.pop(context, (_label.text.isEmpty ? _url.text.trim() : _label.text, link));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final invalid = _url.text.trim().isNotEmpty && _link == null;
+    return AlertDialog(
+      title: Text(widget.canRemove ? 'Edit link' : 'Insert link'),
+      content: SizedBox(
+        width: 400,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _label,
+              autofocus: widget.label.isEmpty,
+              decoration: const InputDecoration(labelText: 'Text to display'),
+            ),
+            const SizedBox(height: 16),
+            TextField(
+              controller: _url,
+              autofocus: widget.label.isNotEmpty,
+              onChanged: (_) => setState(() {}),
+              onSubmitted: (_) => _apply(),
+              decoration: InputDecoration(
+                labelText: 'Web address or email',
+                hintText: 'https://example.com',
+                errorText: invalid ? 'Enter a web address or an email address' : null,
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        if (widget.canRemove)
+          TextButton(onPressed: () => Navigator.pop(context, (widget.label, null)), child: const Text('Remove link')),
+        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
+        FilledButton(onPressed: _link == null ? null : _apply, child: const Text('Apply')),
+      ],
     );
   }
 }
@@ -607,16 +843,15 @@ String _mimeFor(String name) => switch (p.extension(name).toLowerCase()) {
       _ => 'application/octet-stream',
     };
 
-/// Builds the HTML alternative of a plain-text message: escaped,
-/// paragraphs kept, links clickable, quote in a blockquote.
-String _toHtml(String text, String? signature, String? quote, {required bool quoteIsForward}) {
+/// Builds the HTML part around the formatted [body]: the signature and
+/// quote are escaped with paragraphs kept, links clickable, and the quote in
+/// a blockquote.
+String _toHtml(String body, String? signature, String? quote, {required bool quoteIsForward}) {
   String esc(String s) => const HtmlEscape(HtmlEscapeMode.element).convert(s);
-  String linkify(String s) => s.replaceAllMapped(
-      RegExp(r'(https?://[^\s<>"]+[^\s<>".,;:!?)\]])'), (m) => '<a href="${m[1]}">${m[1]}</a>');
-  String para(String s) => linkify(esc(s)).replaceAll('\n', '<br>');
-  final buffer = StringBuffer('<div dir="auto" style="font-family:sans-serif">')..write(para(text));
+  String para(String s) => linkifyHtml(esc(s)).replaceAll('\n', '<br>');
+  final buffer = StringBuffer('<div dir="auto" style="font-family:sans-serif">')..write(body);
   if (signature != null && signature.isNotEmpty) {
-    buffer.write('<br><br><div class="plume_signature">-- <br>${para(signature)}</div>');
+    buffer.write('<br><div class="plume_signature">-- <br>${para(signature)}</div>');
   }
   buffer.write('</div>');
   if (quote != null) {

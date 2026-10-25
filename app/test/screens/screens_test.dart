@@ -8,6 +8,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -25,6 +26,7 @@ import 'package:plume/src/state/settings.dart';
 import 'package:plume/src/ui/actions.dart';
 import 'package:plume/src/ui/app.dart';
 import 'package:plume/src/ui/compose/compose_host.dart';
+import 'package:plume/src/ui/compose/rich_text.dart';
 import 'package:plume/src/ui/onboarding/add_account.dart';
 import 'package:plume_core/plume_core.dart';
 import 'package:plume_store/plume_store.dart';
@@ -140,6 +142,7 @@ final _scenarios = <String, List<Step>>{
         to: const [Address('arjun@northwind.dev', 'Arjun Mehta')],
         subject: 'Re: Q4 infrastructure budget',
         textBody: "Thanks Arjun. The reserved instances breakdown looks solid. Let's move the batch jobs to spot next.",
+        htmlBody: "<div>Thanks Arjun. The reserved instances breakdown looks solid. Let's move the batch jobs to spot next.</div>",
         attachments: [
           OutgoingAttachment(
             filename: 'Q4-forecast.xlsx',
@@ -148,6 +151,36 @@ final _scenarios = <String, List<Step>>{
           ),
         ],
       ));
+    },
+  ],
+  'compose_formatting': [
+    (t, c) async => openThread(c, (c.read(visibleThreadsProvider).value!).first),
+    (t, c) async {
+      c.read(composeProvider.notifier).reopen(OutgoingMessage(
+        accountId: 'demo',
+        from: const Address('alex.rivera@example.com', 'Alex Rivera'),
+        to: const [Address('arjun@northwind.dev', 'Arjun Mehta')],
+        subject: 'Launch checklist',
+        textBody: '',
+        htmlBody: '<div>Hi Arjun,</div><div><br></div>'
+            '<div>Here is the plan for <b>Thursday</b>, see the <a href="https://example.com/doc">doc</a>:</div>'
+            '<ol><li>Freeze the <i>release</i> branch</li><li><u>Run</u> the full suite</li></ol>'
+            '<ul><li>Ping support</li></ul><div><s>Old step</s> Done.</div>',
+      ));
+    },
+    // Select "Hi Arjun" and make it bold from the keyboard.
+    (t, c) async {
+      final body = find.byWidgetPredicate((w) => w is TextField && w.controller is RichTextController);
+      await t.tap(body);
+      final controller = (t.widget<TextField>(body).controller)!;
+      controller.selection = const TextSelection(baseOffset: 0, extentOffset: 8);
+      await t.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await t.sendKeyEvent(LogicalKeyboardKey.keyB);
+      await t.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+      // Clicking a toolbar button keeps the selection in the body.
+      await t.tap(find.byTooltip('Italic (Ctrl+I)'), kind: PointerDeviceKind.mouse);
+      await t.pump();
+      expect((controller as RichTextController).toHtml(), startsWith('<div><b><i>Hi Arjun</i></b>,</div>'));
     },
   ],
   'add_account': [_openAddAccount],
