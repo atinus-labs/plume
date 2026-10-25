@@ -232,10 +232,17 @@ class _TitleRow extends ConsumerWidget {
 
     if (search.active) {
       return Padding(
-        padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
-        child: Text(
-          search.serverResults == null ? 'Downloaded mail' : 'Results from the server',
-          style: theme.textTheme.titleMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+        padding: const EdgeInsets.fromLTRB(12, 0, 4, 4),
+        child: Row(
+          children: [
+            Expanded(
+              child: Text(
+                search.serverResults == null ? 'Downloaded mail' : 'Results from the server',
+                style: theme.textTheme.titleMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+              ),
+            ),
+            const _SyncButton(),
+          ],
         ),
       );
     }
@@ -244,35 +251,42 @@ class _TitleRow extends ConsumerWidget {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
+          padding: const EdgeInsets.fromLTRB(12, 0, 4, 0),
           child: Row(
-            crossAxisAlignment: CrossAxisAlignment.end,
+            crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              Flexible(
-                child: Text(
-                  viewTitle(view, mailboxes),
-                  style: theme.textTheme.headlineMediumEmphasized,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+              Expanded(
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        viewTitle(view, mailboxes),
+                        style: theme.textTheme.headlineMediumEmphasized,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    if (unread > 0) ...[
+                      const SizedBox(width: 10),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(color: theme.colorScheme.primary, borderRadius: Corners.all(Corners.full)),
+                        child: Text('$unread new', style: theme.textTheme.labelMediumEmphasized.copyWith(color: theme.colorScheme.onPrimary)),
+                      ),
+                    ],
+                  ],
                 ),
               ),
-              if (unread > 0) ...[
-                const SizedBox(width: 10),
-                Padding(
-                  padding: const EdgeInsets.only(bottom: 6),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                    decoration: BoxDecoration(color: theme.colorScheme.primary, borderRadius: Corners.all(Corners.full)),
-                    child: Text('$unread new', style: theme.textTheme.labelMediumEmphasized.copyWith(color: theme.colorScheme.onPrimary)),
-                  ),
-                ),
-              ],
-              const Spacer(),
               if (scope != null)
                 Padding(
-                  padding: const EdgeInsets.only(bottom: 6, left: 8),
-                  child: Text(scope, style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+                  padding: const EdgeInsets.only(left: 8, right: 4),
+                  child: Text(
+                    scope,
+                    style: theme.textTheme.labelMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                  ),
                 ),
+              const _SyncButton(),
             ],
           ),
         ),
@@ -281,6 +295,66 @@ class _TitleRow extends ConsumerWidget {
           _CategoryTabs(view: view),
         ],
       ],
+    );
+  }
+}
+
+class _SyncButton extends ConsumerStatefulWidget {
+  const _SyncButton();
+
+  @override
+  ConsumerState<_SyncButton> createState() => _SyncButtonState();
+}
+
+class _SyncButtonState extends ConsumerState<_SyncButton> with SingleTickerProviderStateMixin {
+  late final AnimationController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 1000),
+    );
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final statuses = ref.watch(syncStatusProvider).value ?? const {};
+    final syncing = statuses.values.any((s) => s.phase == SyncPhase.syncing);
+
+    if (syncing) {
+      if (!_controller.isAnimating) {
+        _controller.repeat();
+      }
+    } else {
+      if (_controller.isAnimating) {
+        _controller.stop();
+        _controller.reset();
+      }
+    }
+
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+
+    return IconButton(
+      tooltip: syncing ? 'Checking for mail…' : 'Check for mail (F5)',
+      visualDensity: VisualDensity.compact,
+      iconSize: 20,
+      onPressed: () => ref.read(engineProvider).syncAll(),
+      icon: RotationTransition(
+        turns: _controller,
+        child: Icon(
+          Symbols.sync_rounded,
+          color: syncing ? scheme.primary : scheme.onSurfaceVariant,
+        ),
+      ),
     );
   }
 }
