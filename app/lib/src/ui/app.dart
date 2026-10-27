@@ -50,6 +50,7 @@ class PlumeApp extends ConsumerWidget {
       themeMode: mode,
       themeAnimationDuration: Spring.effectsSlow.duration,
       themeAnimationCurve: Spring.effectsSlow.curve,
+      builder: (context, child) => ToasterHost(child: child ?? const SizedBox.shrink()),
       home: const DesktopBridge(child: DevScenario(child: _RootGate())),
     );
   }

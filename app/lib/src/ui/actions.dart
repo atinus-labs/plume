@@ -8,6 +8,9 @@ import '../state/mail.dart';
 import '../state/navigation.dart';
 import '../state/services.dart';
 import '../state/settings.dart';
+import 'toaster.dart';
+
+export 'toaster.dart';
 
 /// Global messenger so snackbars survive pane changes.
 final scaffoldMessengerKey = GlobalKey<ScaffoldMessengerState>();
@@ -19,16 +22,13 @@ void showSnack(
   Duration? duration,
   bool? showCloseIcon = true,
 }) {
-  final messenger = scaffoldMessengerKey.currentState;
-  if (messenger == null) return;
-  messenger
-    ..hideCurrentSnackBar()
-    ..showSnackBar(SnackBar(
-      content: Text(message),
-      duration: duration ?? const Duration(seconds: 5),
-      action: actionLabel == null ? null : SnackBarAction(label: actionLabel, onPressed: onAction ?? () {}),
-      showCloseIcon: showCloseIcon,
-    ));
+  Toaster.instance.show(
+    message,
+    actionLabel: actionLabel,
+    onAction: onAction,
+    duration: duration,
+    showCloseIcon: showCloseIcon,
+  );
 }
 
 /// Actions that take a conversation out of the current list.
