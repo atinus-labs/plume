@@ -207,6 +207,45 @@ void main() {
     await gesture.removePointer();
   });
 
+  testWidgets('toasts pause timer while hovered and resume on unhover', (tester) async {
+    await tester.pumpWidget(MaterialApp(
+      scaffoldMessengerKey: scaffoldMessengerKey,
+      theme: PlumeTheme.build(brightness: Brightness.light),
+      home: const Scaffold(body: Center(child: Text('Home'))),
+    ));
+
+    showSnack('Hover pause toast', duration: const Duration(seconds: 2));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+
+    expect(find.text('Hover pause toast'), findsOneWidget);
+
+    final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+    await gesture.addPointer(location: Offset.zero);
+    await gesture.moveTo(tester.getCenter(find.text('Hover pause toast')));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+
+    // While hovering, advance time past 2 seconds (5 seconds)
+    await tester.pump(const Duration(seconds: 5));
+
+    // Toast MUST still be present because timer was paused while hovered
+    expect(find.text('Hover pause toast'), findsOneWidget);
+
+    // Now move mouse away (unhover)
+    await gesture.moveTo(const Offset(50, 50));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    // Advance past remaining duration (approx 1.5s) + animation (160ms)
+    await tester.pump(const Duration(seconds: 2));
+    await tester.pump(const Duration(milliseconds: 300));
+
+    expect(find.text('Hover pause toast'), findsNothing);
+
+    await gesture.removePointer();
+  });
+
   testWidgets('stacked toasts auto-dismiss independently after their duration', (tester) async {
     await tester.pumpWidget(MaterialApp(
       scaffoldMessengerKey: scaffoldMessengerKey,

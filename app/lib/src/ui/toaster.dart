@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:math' as math;
 
+import 'package:clock/clock.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:plume_design/plume_design.dart';
@@ -16,7 +17,7 @@ class ToastItem {
     this.onAction,
     this.duration = const Duration(seconds: 5),
     this.showCloseIcon = true,
-  });
+  }) : remainingDuration = duration;
 
   final int id;
   final String message;
@@ -25,7 +26,43 @@ class ToastItem {
   final Duration duration;
   final bool showCloseIcon;
 
+  Duration remainingDuration;
+  DateTime? timerStartedAt;
+  Timer? timer;
   VoidCallback? dismissAction;
+
+  void startTimer() {
+    if (remainingDuration <= Duration.zero) return;
+    timer?.cancel();
+    timerStartedAt = clock.now();
+    timer = Timer(remainingDuration, () {
+      Toaster.instance.dismiss(id);
+    });
+  }
+
+  void pauseTimer() {
+    if (timer != null && timerStartedAt != null) {
+      timer!.cancel();
+      timer = null;
+      final elapsed = clock.now().difference(timerStartedAt!);
+      remainingDuration -= elapsed;
+      if (remainingDuration < const Duration(milliseconds: 100)) {
+        remainingDuration = const Duration(milliseconds: 100);
+      }
+      timerStartedAt = null;
+    }
+  }
+
+  void resumeTimer() {
+    pauseTimer();
+    startTimer();
+  }
+
+  void cancelTimer() {
+    timer?.cancel();
+    timer = null;
+    timerStartedAt = null;
+  }
 }
 
 /// Global toaster manager that coordinates stacked toast notifications.
@@ -40,6 +77,9 @@ class Toaster extends ChangeNotifier {
 
   OverlayEntry? _overlayEntry;
   bool isHostMounted = false;
+  bool _isHovered = false;
+
+  bool get isHovered => _isHovered;
 
   /// Maximum number of stacked toasts simultaneously tracked.
   static const int maxVisible = 6;
@@ -69,8 +109,32 @@ class Toaster extends ChangeNotifier {
     }
 
     _items.add(item);
+
+    // If currently hovered, the timer is on hold immediately.
+    if (!_isHovered) {
+      item.startTimer();
+    }
+
     notifyListeners();
     _ensureOverlayMounted();
+  }
+
+  /// Sets whether the user is hovering over any toaster on screen.
+  /// When hovered, pauses all dismiss timers. When released, holds are released
+  /// and all timers resume.
+  void setHovered(bool hovered) {
+    if (_isHovered == hovered) return;
+    _isHovered = hovered;
+    if (_isHovered) {
+      for (final item in _items) {
+        item.pauseTimer();
+      }
+    } else {
+      for (final item in _items) {
+        item.resumeTimer();
+      }
+    }
+    notifyListeners();
   }
 
   /// Triggers dismissal animation for the toast with [id].
@@ -78,10 +142,14 @@ class Toaster extends ChangeNotifier {
     final index = _items.indexWhere((it) => it.id == id);
     if (index == -1) return;
     final item = _items[index];
+    item.cancelTimer();
     if (item.dismissAction != null) {
       item.dismissAction!();
     } else {
       _items.removeAt(index);
+      if (_items.isEmpty) {
+        _isHovered = false;
+      }
       notifyListeners();
     }
   }
@@ -90,14 +158,22 @@ class Toaster extends ChangeNotifier {
   void remove(int id) {
     final index = _items.indexWhere((it) => it.id == id);
     if (index != -1) {
-      _items.removeAt(index);
+      final item = _items.removeAt(index);
+      item.cancelTimer();
+      if (_items.isEmpty) {
+        _isHovered = false;
+      }
       notifyListeners();
     }
   }
 
   /// Dismisses all toasts immediately and clears state.
   void clear() {
+    for (final it in _items) {
+      it.cancelTimer();
+    }
     _items.clear();
+    _isHovered = false;
     notifyListeners();
     if (_overlayEntry != null && _overlayEntry!.mounted) {
       _overlayEntry!.remove();
@@ -187,23 +263,33 @@ class ToasterStack extends StatefulWidget {
 }
 
 class _ToasterStackState extends State<ToasterStack> {
-  bool _hovered = false;
   final Map<int, double> _cardHeights = {};
+  Timer? _exitDebounce;
 
   static const double _peekOffset = 14.0;
   static const double _gap = 8.0;
   static const double _defaultHeight = 52.0;
 
   void _onEnter() {
-    if (!_hovered) {
-      setState(() => _hovered = true);
-    }
+    _exitDebounce?.cancel();
+    _exitDebounce = null;
+    Toaster.instance.setHovered(true);
   }
 
   void _onExit() {
-    if (_hovered) {
-      setState(() => _hovered = false);
-    }
+    _exitDebounce?.cancel();
+    _exitDebounce = Timer(const Duration(milliseconds: 120), () {
+      if (mounted) {
+        Toaster.instance.setHovered(false);
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _exitDebounce?.cancel();
+    _exitDebounce = null;
+    super.dispose();
   }
 
   @override
@@ -212,7 +298,13 @@ class _ToasterStackState extends State<ToasterStack> {
       animation: Toaster.instance,
       builder: (context, _) {
         final items = Toaster.instance.items;
-        if (items.isEmpty) return const SizedBox.shrink();
+        if (items.isEmpty) {
+          _exitDebounce?.cancel();
+          _exitDebounce = null;
+          return const SizedBox.shrink();
+        }
+
+        final hovered = Toaster.instance.isHovered;
 
         // displayList has newest first (index 0 = front card)
         final displayList = items.reversed.toList();
@@ -231,7 +323,7 @@ class _ToasterStackState extends State<ToasterStack> {
 
         final double frontHeight = _cardHeights[displayList.first.id] ?? _defaultHeight;
         final double totalFoldedHeight = frontHeight + math.min(count - 1, 2) * _peekOffset;
-        final double containerHeight = _hovered ? totalUnfoldedHeight : totalFoldedHeight;
+        final double containerHeight = hovered ? totalUnfoldedHeight : totalFoldedHeight;
 
         // Stack children ordered from back to front (displayList.reversed)
         // so index 0 (newest) is painted last and sits on top.
@@ -245,10 +337,11 @@ class _ToasterStackState extends State<ToasterStack> {
               child: MouseRegion(
                 onEnter: (_) => _onEnter(),
                 onExit: (_) => _onExit(),
+                hitTestBehavior: HitTestBehavior.translucent,
                 child: GestureDetector(
                   onTap: () {
                     // Tap toggle for touch devices
-                    if (_hovered) {
+                    if (hovered) {
                       _onExit();
                     } else {
                       _onEnter();
@@ -269,7 +362,7 @@ class _ToasterStackState extends State<ToasterStack> {
                             _buildCardEntry(
                               item: item,
                               index: displayList.indexOf(item),
-                              count: count,
+                              hovered: hovered,
                               unfoldedBottom: unfoldedBottoms[item.id] ?? 0.0,
                             ),
                           ],
@@ -289,7 +382,7 @@ class _ToasterStackState extends State<ToasterStack> {
   Widget _buildCardEntry({
     required ToastItem item,
     required int index,
-    required int count,
+    required bool hovered,
     required double unfoldedBottom,
   }) {
     // Folded calculations: index 0 is front card at bottom: 0.
@@ -318,9 +411,9 @@ class _ToasterStackState extends State<ToasterStack> {
       foldedOpacity = 0.0;
     }
 
-    final double targetBottom = _hovered ? unfoldedBottom : foldedBottom;
-    final double targetScale = _hovered ? 1.0 : foldedScale;
-    final double targetOpacity = _hovered ? 1.0 : foldedOpacity;
+    final double targetBottom = hovered ? unfoldedBottom : foldedBottom;
+    final double targetScale = hovered ? 1.0 : foldedScale;
+    final double targetOpacity = hovered ? 1.0 : foldedOpacity;
 
     return AnimatedPositioned(
       key: ValueKey(item.id),
@@ -345,9 +438,12 @@ class _ToasterStackState extends State<ToasterStack> {
               }
             },
             child: _ToastCard(
+              key: ValueKey('toast_card_${item.id}'),
               item: item,
               isFront: index == 0,
-              isHovered: _hovered,
+              isHovered: hovered,
+              onEnter: _onEnter,
+              onExit: _onExit,
               onDismissed: () {
                 _cardHeights.remove(item.id);
                 Toaster.instance.remove(item.id);
@@ -362,15 +458,20 @@ class _ToasterStackState extends State<ToasterStack> {
 
 class _ToastCard extends StatefulWidget {
   const _ToastCard({
+    super.key,
     required this.item,
     required this.isFront,
     required this.isHovered,
+    required this.onEnter,
+    required this.onExit,
     required this.onDismissed,
   });
 
   final ToastItem item;
   final bool isFront;
   final bool isHovered;
+  final VoidCallback onEnter;
+  final VoidCallback onExit;
   final VoidCallback onDismissed;
 
   @override
@@ -382,10 +483,6 @@ class _ToastCardState extends State<_ToastCard> with SingleTickerProviderStateMi
   late final Animation<double> _fadeAnimation;
   late final Animation<Offset> _slideAnimation;
   bool _dismissing = false;
-
-  Timer? _timer;
-  Duration _remainingDuration = Duration.zero;
-  DateTime? _timerStartedAt;
 
   @override
   void initState() {
@@ -409,66 +506,23 @@ class _ToastCardState extends State<_ToastCard> with SingleTickerProviderStateMi
 
     widget.item.dismissAction = _triggerDismiss;
     _controller.forward();
-
-    _remainingDuration = widget.item.duration;
-    if (!widget.isHovered) {
-      _startTimer();
-    }
-  }
-
-  void _startTimer() {
-    if (_remainingDuration <= Duration.zero) return;
-    _timerStartedAt = DateTime.now();
-    _timer = Timer(_remainingDuration, () {
-      if (mounted) {
-        _triggerDismiss();
-      }
-    });
-  }
-
-  void _pauseTimer() {
-    if (_timer != null && _timerStartedAt != null) {
-      _timer!.cancel();
-      _timer = null;
-      final elapsed = DateTime.now().difference(_timerStartedAt!);
-      _remainingDuration -= elapsed;
-      if (_remainingDuration < const Duration(milliseconds: 100)) {
-        _remainingDuration = const Duration(milliseconds: 100);
-      }
-      _timerStartedAt = null;
-    }
-  }
-
-  void _resumeTimer() {
-    _pauseTimer();
-    _startTimer();
   }
 
   @override
   void didUpdateWidget(_ToastCard oldWidget) {
     super.didUpdateWidget(oldWidget);
     widget.item.dismissAction = _triggerDismiss;
-    if (widget.isHovered != oldWidget.isHovered) {
-      if (widget.isHovered) {
-        _pauseTimer();
-      } else {
-        _resumeTimer();
-      }
-    }
   }
 
   void _triggerDismiss() {
     if (_dismissing || !mounted) return;
     _dismissing = true;
-    _timer?.cancel();
-    _timer = null;
     _controller.reverse();
   }
 
   @override
   void dispose() {
-    _timer?.cancel();
-    _timer = null;
+    widget.item.cancelTimer();
     if (widget.item.dismissAction == _triggerDismiss) {
       widget.item.dismissAction = null;
     }
@@ -482,11 +536,16 @@ class _ToastCardState extends State<_ToastCard> with SingleTickerProviderStateMi
       opacity: _fadeAnimation,
       child: SlideTransition(
         position: _slideAnimation,
-        child: _ToastView(
-          item: widget.item,
-          isFront: widget.isFront,
-          isHovered: widget.isHovered,
-          onDismiss: _triggerDismiss,
+        child: MouseRegion(
+          onEnter: (_) => widget.onEnter(),
+          onExit: (_) => widget.onExit(),
+          hitTestBehavior: HitTestBehavior.translucent,
+          child: _ToastView(
+            item: widget.item,
+            isFront: widget.isFront,
+            isHovered: widget.isHovered,
+            onDismiss: _triggerDismiss,
+          ),
         ),
       ),
     );
