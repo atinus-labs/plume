@@ -52,15 +52,31 @@ Launch **Plume** from your app launcher, or run `plume`.
 
 Outlook.com, Hotmail and Microsoft 365 are not supported.
 
-**Google sign-in** uses the Gmail API and needs your own OAuth client:
+**Google sign-in** uses the Gmail API and needs an OAuth client. You set one up once in the [Google Cloud Console](https://console.cloud.google.com/):
 
-1. In the [Google Cloud Console](https://console.cloud.google.com/), create a project and enable the **Gmail API**.
-2. Under **Google Auth Platform**, set the audience to **External** and publish the app. Apps in *Testing* status have sign-ins expire every 7 days.
-3. Add the scopes `https://mail.google.com/`, `openid`, `email` and `profile`.
-4. Create a **Desktop app** client and download the JSON.
-5. Select it in Plume (**Choose client file…**) or pass it to `tool/install.sh --client`.
+1. **Create a project**, then open **APIs & Services → Library**, find **Gmail API** and click **Enable**. Without it, sign-in works but mail doesn't load.
+2. Open **Google Auth Platform**. If it says it isn't configured yet, click **Get started**, enter `Plume` and your email, choose **External** as the audience, and finish.
+3. **Branding:** fill in the fields below. Google won't let you publish without the home page and privacy policy links.
+   - **App name:** `Plume`
+   - **User support email** and **Developer contact email:** your address
+   - **Application home page** and **Application privacy policy link:** public pages on a site you own, such as a free GitHub Pages site (`yourname.github.io`)
+   - **Authorized domains:** the domain of those two links
+   - Leave **App logo** empty. Google doesn't show it until the app is verified, and adding one starts verification.
+4. **Audience:** check that the user type is **External**, click **Publish app** and confirm. The status should read **In production**. Leave the app unverified; verification isn't needed for personal use. Apps left in *Testing* make you sign in again every 7 days.
+5. **Data access → Add or remove scopes:** tick `https://mail.google.com/`, `.../auth/userinfo.email`, `.../auth/userinfo.profile` and `openid`, click **Update**, then **Save**. If `https://mail.google.com/` isn't listed, the Gmail API from step 1 isn't enabled yet.
+6. **Clients → Create client:** choose **Desktop app**, click **Create**, then download the JSON from the dialog that opens. Google shows the client secret only once, so download it before closing the dialog.
+7. In Plume, add an account and choose **Google → Choose client file…**, then pick the JSON. You can also pass it to `tool/install.sh --client`. Plume saves a copy, so you only do this once.
+8. Choose **Google** again to sign in. Your browser opens and Google warns *"Google hasn't verified this app"*, which is expected because the client is your own. Choose **Advanced → Go to Plume (unsafe)**, allow every permission Google lists, and continue.
 
-Google will warn that the app is unverified, since the client is yours. Choose **Advanced → Go to Plume**. Unverified clients are limited to 100 users.
+You can give the same JSON to other people so they skip these steps, or build Plume with it (`--dart-define=PLUME_GOOGLE_CLIENT_ID=… --dart-define=PLUME_GOOGLE_CLIENT_SECRET=…`) so nobody needs the file. Everyone then signs in through your project. An unverified project can be used by at most 100 Google accounts over its lifetime, and that count never resets. Google deletes OAuth clients that go unused for 6 months; a deleted client can be restored for 30 days.
+
+| Problem | Fix |
+|---|---|
+| **Publish app** is greyed out | Fill in the home page and privacy policy links on **Branding** (step 3). |
+| *Access blocked: Plume has not completed the Google verification process* (Error 403: access_denied) | The app is still in *Testing*. Publish it (step 4). |
+| Plume says some permissions were unticked | Sign in again and allow every permission on Google's screen. |
+| Signed in, but no mail loads | Enable the Gmail API (step 1). |
+| The JSON wasn't downloaded and Google no longer shows the secret | Create another Desktop app client (step 6). |
 
 ## Data locations
 

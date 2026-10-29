@@ -334,10 +334,15 @@ class _GoogleSetupState extends State<_GoogleSetup> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final steps = [
-      'Open Google Cloud Console and create a project.',
-      'Enable the Gmail API for it.',
-      'Configure the OAuth consent screen (External) and publish it.',
-      'Create an OAuth client ID of type “Desktop app” and download its JSON.',
+      'Open Google Cloud Console, create a project and enable the Gmail API.',
+      'In Google Auth Platform → Branding, fill in the app name, emails, home page and '
+          'privacy policy links, and add the links’ domain under Authorized domains. Publishing needs them.',
+      'Under Audience, make sure the user type is External, then click Publish app.',
+      'Under Data access, add https://mail.google.com/, userinfo.email, userinfo.profile and openid.',
+      'Under Clients, create a “Desktop app” client and download its JSON right away. '
+          'Google shows the secret only once.',
+      'Choose the file below, then pick Google again to sign in. When Google says the app '
+          'isn’t verified, choose Advanced → Go to Plume.',
     ];
     return Material(
       color: scheme.surfaceContainerHigh,
