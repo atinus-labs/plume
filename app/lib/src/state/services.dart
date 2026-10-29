@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plume_core/plume_core.dart';
 
+import '../platform/linux/graphics_engine.dart';
 import '../services/accounts.dart';
 import '../services/desktop.dart';
 import '../services/secret_store.dart';
@@ -15,6 +16,7 @@ final class Services {
     required this.secrets,
     required this.accounts,
     required this.initialSettings,
+    this.graphicsEngine,
   });
 
   final MailStore store;
@@ -23,6 +25,9 @@ final class Services {
   final SecretStore secrets;
   final AccountsService accounts;
   final AppSettings initialSettings;
+
+  /// Linux only.
+  final GraphicsEngineSetting? graphicsEngine;
 }
 
 /// Overridden in `main` with the bootstrapped instance.

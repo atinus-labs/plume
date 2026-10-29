@@ -17,6 +17,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:plume/src/platform/linux/assistive_tech.dart';
 import 'package:plume/src/state/mail.dart';
 import 'package:plume/src/state/navigation.dart';
 import 'package:plume/src/state/services.dart';
@@ -41,6 +42,8 @@ void main() {
 
   testWidgets('motion stays within the frame budget', (tester) async {
     final services = await demoServices();
+    // As in the app: on Linux, no semantics tree unless a screen reader runs.
+    await AssistiveTech.instance.watch();
     late WidgetRef ref;
     await tester.pumpWidget(ProviderScope(
       overrides: [servicesProvider.overrideWithValue(services)],

@@ -17,6 +17,11 @@ static constexpr char kMailtoScheme[] = "mailto";
 // to run a development build next to an installed Plume.
 static constexpr char kMultiInstanceEnv[] = "PLUME_ALLOW_MULTIPLE_INSTANCES";
 
+// The graphics engine setting, in Plume's data directory: "skia" to draw with
+// Skia instead of Impeller. Written by Dart
+// (lib/src/platform/linux/graphics_engine.dart).
+static constexpr char kGraphicsEngineFile[] = "graphics-engine";
+
 struct _MyApplication {
   GtkApplication parent_instance;
   char** dart_entrypoint_arguments;
@@ -52,6 +57,19 @@ static gboolean is_mailto_uri(const gchar* arg) {
   return scheme != nullptr && g_ascii_strcasecmp(scheme, kMailtoScheme) == 0;
 }
 
+// Whether the user picked the Compatible graphics engine (Skia rather than
+// Impeller) in settings. It must be known before the engine starts, so it is
+// kept in a file of its own rather than the settings database.
+static gboolean skia_requested() {
+  g_autofree gchar* path = g_build_filename(
+      g_get_user_data_dir(), "plume", kGraphicsEngineFile, nullptr);
+  g_autofree gchar* contents = nullptr;
+  if (!g_file_get_contents(path, &contents, nullptr, nullptr)) {
+    return FALSE;
+  }
+  return g_strcmp0(g_strstrip(contents), "skia") == 0;
+}
+
 // Creates the main window (starting Flutter) on first use. Returns TRUE if it
 // was created now, in which case the launch token has been used for it.
 static gboolean ensure_main_window(MyApplication* self) {
@@ -62,6 +80,16 @@ static gboolean ensure_main_window(MyApplication* self) {
   g_autoptr(FlDartProject) project = fl_dart_project_new();
   fl_dart_project_set_dart_entrypoint_arguments(
       project, self->dart_entrypoint_arguments);
+  // Build Dart frames on a thread of their own. Since Flutter 3.39 they share
+  // GTK's main thread by default, where GTK spends several milliseconds of
+  // each frame painting the last one into the window, so frames start late
+  // and miss their tick. Plume makes no FFI calls that need the main thread;
+  // method channels (the window, the mail renderer, plugins) still run there.
+  fl_dart_project_set_ui_thread_policy(
+      project, FL_UI_THREAD_POLICY_RUN_ON_SEPARATE_THREAD);
+  if (skia_requested()) {
+    fl_dart_project_set_enable_impeller(project, FALSE);
+  }
 
   self->main_window =
       plume_main_window_new(GTK_APPLICATION(self), project, self->start_hidden,

@@ -45,7 +45,9 @@ class Autostart {
     bool? isFlatpak,
     DBusClient? bus,
     this.callTimeout = defaultCallTimeout,
-  }) : executable = executable ?? Platform.resolvedExecutable,
+  }) : // Inside an AppImage the binary lives in a mount that is gone after
+       // exit; $APPIMAGE is the file to start instead.
+       executable = executable ?? Platform.environment['APPIMAGE'] ?? Platform.resolvedExecutable,
        environment = environment ?? DesktopEnvironment.current(),
        _configHomeOverride = configHome,
        _isFlatpakOverride = isFlatpak,

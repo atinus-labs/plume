@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -5,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'src/bootstrap.dart';
+import 'src/platform/linux/assistive_tech.dart';
 import 'src/state/services.dart';
 import 'src/ui/app.dart';
 
@@ -12,6 +14,7 @@ Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   _debugErrorLog();
   final services = await bootstrap(args);
+  unawaited(AssistiveTech.instance.watch());
   runApp(ProviderScope(
     overrides: [servicesProvider.overrideWithValue(services)],
     child: const PlumeApp(),

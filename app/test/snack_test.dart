@@ -13,6 +13,47 @@ void main() {
     Toaster.instance.clear();
   });
 
+  for (final brightness in Brightness.values) {
+    testWidgets('hosted toasts show the close tooltip on hover in ${brightness.name} mode', (tester) async {
+      await tester.pumpWidget(MaterialApp(
+        theme: PlumeTheme.build(brightness: brightness),
+        builder: (context, child) => ToasterHost(child: child!),
+        home: const Scaffold(body: Center(child: Text('Home'))),
+      ));
+
+      showSnack('First toast');
+      showSnack('Second toast');
+      await tester.pumpAndSettle();
+
+      final closeButton = find.widgetWithIcon(IconButton, Icons.close).last;
+      final toast = find.ancestor(of: closeButton, matching: find.byType(Material)).first;
+      final boundsBeforeHover = tester.getRect(toast);
+      final gesture = await tester.createGesture(kind: PointerDeviceKind.mouse);
+      await gesture.addPointer(location: Offset.zero);
+      addTearDown(gesture.removePointer);
+      await gesture.moveTo(tester.getCenter(closeButton));
+      await tester.pumpAndSettle();
+      await tester.pump(const Duration(milliseconds: 500));
+      await tester.pumpAndSettle();
+
+      expect(tester.takeException(), isNull);
+      expect(find.byType(ErrorWidget), findsNothing);
+      expect(find.text('Close'), findsOneWidget);
+      expect(Toaster.instance.isHovered, isTrue);
+      expect(tester.getRect(toast), boundsBeforeHover);
+      expect(tester.getBottomLeft(find.text('First toast')).dy,
+          lessThan(tester.getTopLeft(find.text('Second toast')).dy));
+
+      // Hovering over the tooltip's button also keeps the toast alive.
+      await tester.pump(const Duration(seconds: 6));
+      expect(find.text('Second toast'), findsOneWidget);
+      await tester.tap(closeButton);
+      await tester.pumpAndSettle();
+      expect(find.text('Second toast'), findsNothing);
+      expect(find.text('First toast'), findsOneWidget);
+    });
+  }
+
   testWidgets('showSnack displays close icon button and closes on tap', (tester) async {
     await tester.pumpWidget(MaterialApp(
       scaffoldMessengerKey: scaffoldMessengerKey,

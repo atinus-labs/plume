@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plume_design/plume_design.dart';
 
 import '../config.dart';
+import '../platform/linux/assistive_tech.dart';
 import '../services/desktop.dart';
 import '../state/mail.dart';
 import '../state/services.dart';
@@ -41,17 +42,27 @@ class PlumeApp extends ConsumerWidget {
       final m => m,
     };
 
-    return MaterialApp(
-      title: AppConfig.appName,
-      debugShowCheckedModeBanner: false,
-      scaffoldMessengerKey: scaffoldMessengerKey,
-      theme: PlumeTheme.build(brightness: Brightness.light, seed: seed, contrast: contrast),
-      darkTheme: PlumeTheme.build(brightness: Brightness.dark, seed: seed, contrast: contrast),
-      themeMode: mode,
-      themeAnimationDuration: Spring.effectsSlow.duration,
-      themeAnimationCurve: Spring.effectsSlow.curve,
-      builder: (context, child) => ToasterHost(child: child ?? const SizedBox.shrink()),
-      home: const DesktopBridge(child: DevScenario(child: _RootGate())),
+    // No semantics tree while no screen reader is listening (Linux).
+    return ValueListenableBuilder(
+      valueListenable: AssistiveTech.instance,
+      builder: (context, listening, app) => ExcludeSemantics(excluding: !listening, child: app),
+      child: MaterialApp(
+        title: AppConfig.appName,
+        debugShowCheckedModeBanner: false,
+        scaffoldMessengerKey: scaffoldMessengerKey,
+        theme: PlumeTheme.build(brightness: Brightness.light, seed: seed, contrast: contrast),
+        darkTheme: PlumeTheme.build(brightness: Brightness.dark, seed: seed, contrast: contrast),
+        themeMode: mode,
+        themeAnimationDuration: Spring.effectsSlow.duration,
+        themeAnimationCurve: Spring.effectsSlow.curve,
+        // Opaque: the Linux runner leaves the view transparent, so anything
+        // fading or scaling in would otherwise show GTK's window behind it.
+        builder: (context, child) => ColoredBox(
+          color: PlumeSurfaces.of(context).window,
+          child: ToasterHost(child: child ?? const SizedBox.shrink()),
+        ),
+        home: const DesktopBridge(child: DevScenario(child: _RootGate())),
+      ),
     );
   }
 }

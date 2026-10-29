@@ -10,6 +10,7 @@ import 'package:plume_core/plume_core.dart';
 import 'package:plume_design/plume_design.dart';
 
 import '../../config.dart';
+import '../../platform/linux/graphics_engine.dart';
 import '../../services/desktop.dart';
 import '../../services/imap_connector.dart';
 import '../../state/mail.dart';
@@ -285,6 +286,7 @@ class SettingsPage extends ConsumerWidget {
                           ),
                           const _AutostartRow(),
                           const _DefaultMailAppRow(),
+                          if (ref.watch(servicesProvider).graphicsEngine case final engine?) _GraphicsEngineRow(engine),
                           _Row(
                             icon: Symbols.key_rounded,
                             title: 'Credentials',
@@ -751,6 +753,39 @@ class _DefaultMailAppRowState extends ConsumerState<_DefaultMailAppRow> with Wid
       },
     );
   }
+}
+
+class _GraphicsEngineRow extends StatelessWidget {
+  const _GraphicsEngineRow(this.setting);
+
+  final GraphicsEngineSetting setting;
+
+  @override
+  Widget build(BuildContext context) => ValueListenableBuilder(
+        valueListenable: setting,
+        builder: (context, skia, _) => _Row(
+          icon: Symbols.memory_rounded,
+          title: 'Graphics engine',
+          subtitle: setting.changed
+              ? 'Restart Plume to switch engines'
+              : 'If animations stutter, Compatible may run better on some graphics chips',
+          trailing: SegmentedButton<bool>(
+            showSelectedIcon: false,
+            segments: const [
+              ButtonSegment(value: false, label: Text('Modern')),
+              ButtonSegment(value: true, label: Text('Compatible')),
+            ],
+            selected: {skia},
+            onSelectionChanged: (v) async {
+              try {
+                await setting.choose(skia: v.first);
+              } catch (e) {
+                showSnack('Couldn’t change the graphics engine: $e');
+              }
+            },
+          ),
+        ),
+      );
 }
 
 class _ShortcutsDialog extends StatelessWidget {

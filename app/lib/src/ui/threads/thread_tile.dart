@@ -7,8 +7,8 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:plume_core/plume_core.dart';
 import 'package:plume_design/plume_design.dart';
 
-import '../../state/navigation.dart';
 import '../../state/avatars.dart';
+import '../../state/navigation.dart';
 import '../actions.dart';
 import '../common/format.dart';
 import 'thread_menu.dart';
@@ -16,8 +16,9 @@ import 'thread_menu.dart';
 /// One conversation in the message list.
 ///
 /// Rows form an M3 Expressive connected group per date section. The open
-/// conversation springs into a fully rounded, tinted pill; hovering reveals
-/// quick actions in place of the date.
+/// conversation springs into a fully rounded, tinted pill, rounding the
+/// exposed edges of its neighbours; hovering reveals quick actions in place
+/// of the date.
 class ThreadTile extends ConsumerStatefulWidget {
   const ThreadTile({
     super.key,
@@ -26,6 +27,8 @@ class ThreadTile extends ConsumerStatefulWidget {
     required this.groupSize,
     required this.account,
     required this.showAccountDot,
+    this.previousKey,
+    this.nextKey,
   });
 
   final ThreadSummary thread;
@@ -33,6 +36,10 @@ class ThreadTile extends ConsumerStatefulWidget {
   final int groupSize;
   final Account? account;
   final bool showAccountDot;
+
+  /// Adjacent live rows in the same date group, as accountId/threadId keys.
+  final String? previousKey;
+  final String? nextKey;
 
   @override
   ConsumerState<ThreadTile> createState() => _ThreadTileState();
@@ -73,6 +80,21 @@ class _ThreadTileState extends ConsumerState<ThreadTile> {
     _wasOpen = open;
     final selected = ref.watch(selectionProvider.select((s) => s.contains(thread.key)));
     final selectionMode = ref.watch(selectionProvider.select((s) => s.isNotEmpty));
+    // Watch only these neighbours, so opening a thread does not rebuild
+    // every row in the list.
+    final (previousOpen, nextOpen) = ref.watch(openThreadProvider.select((open) {
+      if (open == null) return (false, false);
+      final openKey = '${open.accountId}/${open.threadId}';
+      return (openKey == widget.previousKey, openKey == widget.nextKey);
+    }));
+    final (previousSelected, nextSelected) = ref.watch(selectionProvider.select(
+      (s) => (s.contains(widget.previousKey), s.contains(widget.nextKey)),
+    ));
+    final grouped = groupedRadius(widget.index, widget.groupSize);
+    final baseRadius = BorderRadius.vertical(
+      top: previousOpen || previousSelected ? const Radius.circular(Corners.largeIncreased) : grouped.topLeft,
+      bottom: nextOpen || nextSelected ? const Radius.circular(Corners.largeIncreased) : grouped.bottomLeft,
+    );
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final surfaces = PlumeSurfaces.of(context);
@@ -88,10 +110,10 @@ class _ThreadTileState extends ConsumerState<ThreadTile> {
 
     return Padding(
       padding: const EdgeInsets.only(bottom: 2),
-      // Corners follow the row's place in its date group, which changes as
-      // neighbours arrive or leave.
+      // Open and selected rows split the connected group, exposing rounded
+      // ends on the rows above and below them.
       child: TweenAnimationBuilder<BorderRadius?>(
-        tween: BorderRadiusTween(end: groupedRadius(widget.index, widget.groupSize)),
+        tween: BorderRadiusTween(end: baseRadius),
         duration: Spring.standard.duration,
         curve: Spring.standard.curve,
         builder: (context, base, child) => SpringBuilder(

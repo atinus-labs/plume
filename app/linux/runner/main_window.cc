@@ -9,6 +9,7 @@
 #include <gdk/gdkx.h>
 #endif
 
+#include "assistive_tech.h"
 #include "flutter/generated_plugin_registrant.h"
 #include "mail_renderer.h"
 
@@ -20,8 +21,9 @@ constexpr gint kDefaultHeight = 820;
 constexpr gint kMinimumWidth = 400;
 constexpr gint kMinimumHeight = 520;
 
-// Neutral Material 3 surface colours, painted by the view until Flutter's
-// first frame (and in any gap while resizing) so there is no white flash.
+// Neutral Material 3 surface colours, painted as the window's background
+// behind the (transparent) view, so there is no white flash before Flutter's
+// first frame or in any gap while resizing.
 constexpr char kDarkBackground[] = "#141218";
 constexpr char kLightBackground[] = "#fef7ff";
 
@@ -50,6 +52,13 @@ struct _PlumeMainWindow {
 
   // Renders HTML mail for the reader (`plume/mail_renderer`).
   PlumeMailRenderer* mail_renderer;
+
+  // Tells Dart whether a screen reader may be listening
+  // (`plume/accessibility`).
+  PlumeAssistiveTech* assistive_tech;
+
+  // The window's background colour (see set_background).
+  GtkCssProvider* background;
 
   // TRUE until the window should be shown after the first frame. Set for
   // `--background` launches and when Dart hides the window before then.
@@ -498,10 +507,14 @@ static void method_call_cb(FlMethodChannel* channel,
   }
 }
 
+// Sets the colour shown behind the view. GTK paints the window's background
+// anyway, so this costs nothing, unlike FlView's own background colour, which
+// fills the whole view on the CPU before every frame.
 static void set_background(PlumeMainWindow* self, gboolean dark) {
-  GdkRGBA color;
-  gdk_rgba_parse(&color, dark ? kDarkBackground : kLightBackground);
-  fl_view_set_background_color(self->view, &color);
+  g_autofree gchar* css =
+      g_strdup_printf("window { background-color: %s; }",
+                      dark ? kDarkBackground : kLightBackground);
+  gtk_css_provider_load_from_data(self->background, css, -1, nullptr);
 }
 
 // Picks the pre-first-frame background from the portal's colour-scheme
@@ -581,6 +594,8 @@ static void plume_main_window_dispose(GObject* object) {
   }
   g_clear_object(&self->channel);
   g_clear_object(&self->mail_renderer);
+  g_clear_object(&self->assistive_tech);
+  g_clear_object(&self->background);
   g_clear_pointer(&self->last_button_press, gdk_event_free);
   g_clear_pointer(&self->pending_token, g_free);
   g_clear_pointer(&self->pending_uris, g_ptr_array_unref);
@@ -641,8 +656,19 @@ PlumeMainWindow* plume_main_window_new(GtkApplication* application,
   g_signal_connect_swapped(window, "hide", G_CALLBACK(schedule_state_update),
                            self);
 
-  self->view = fl_view_new(project);
+  self->background = gtk_css_provider_new();
+  gtk_style_context_add_provider(
+      gtk_widget_get_style_context(GTK_WIDGET(window)),
+      GTK_STYLE_PROVIDER(self->background),
+      GTK_STYLE_PROVIDER_PRIORITY_APPLICATION);
   setup_background(self, G_APPLICATION(application));
+
+  self->view = fl_view_new(project);
+  // Transparent, so FlView skips filling the view before every frame; Flutter
+  // paints every pixel, and the window's background shows until it has. (GTK
+  // 3 can't parse "#00000000", so it's set directly.)
+  GdkRGBA transparent = {0.0, 0.0, 0.0, 0.0};
+  fl_view_set_background_color(self->view, &transparent);
   gtk_widget_set_size_request(GTK_WIDGET(self->view), kMinimumWidth,
                               kMinimumHeight);
   gtk_widget_show(GTK_WIDGET(self->view));
@@ -658,6 +684,8 @@ PlumeMainWindow* plume_main_window_new(GtkApplication* application,
   self->mail_renderer = plume_mail_renderer_new(
       fl_engine_get_binary_messenger(fl_view_get_engine(self->view)),
       fl_dart_project_get_assets_path(project));
+  self->assistive_tech = plume_assistive_tech_new(
+      fl_engine_get_binary_messenger(fl_view_get_engine(self->view)));
 
   // Track button presses for startMove/startResize.
   self->button_press_signal_id =

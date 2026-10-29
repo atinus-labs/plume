@@ -845,13 +845,15 @@ class _GroupedListState extends State<_GroupedList> {
   /// rows that changed.
   final _tiles = <String, ThreadTile>{};
 
-  ThreadTile _tile(ThreadSummary thread, int index, int size) {
+  ThreadTile _tile(ThreadSummary thread, int index, int size, String? previousKey, String? nextKey) {
     final account = widget.accounts[thread.accountId];
     final old = _tiles[thread.key];
     if (old != null &&
         old.thread == thread &&
         old.index == index &&
         old.groupSize == size &&
+        old.previousKey == previousKey &&
+        old.nextKey == nextKey &&
         old.account == account &&
         old.showAccountDot == widget.unified) {
       return old;
@@ -862,6 +864,8 @@ class _GroupedListState extends State<_GroupedList> {
       groupSize: size,
       account: account,
       showAccountDot: widget.unified,
+      previousKey: previousKey,
+      nextKey: nextKey,
     );
   }
 
@@ -981,7 +985,9 @@ class _GroupedListState extends State<_GroupedList> {
       for (var i = 0; i < live.length; i++) {
         live[i]
           ..index = i
-          ..size = live.length;
+          ..size = live.length
+          ..previousKey = i > 0 ? live[i - 1].thread.key : null
+          ..nextKey = i + 1 < live.length ? live[i + 1].thread.key : null;
         _lastPlace[live[i].thread.key] = (i, live.length);
       }
       for (final r in rows) {
@@ -989,7 +995,9 @@ class _GroupedListState extends State<_GroupedList> {
         final (index, size) = _lastPlace[r.thread.key] ?? (0, 1);
         r
           ..index = index
-          ..size = size;
+          ..size = size
+          ..previousKey = _tiles[r.thread.key]?.previousKey
+          ..nextKey = _tiles[r.thread.key]?.nextKey;
       }
       if (groupStart > 0) (entries[groupStart - 1] as _HeaderEntry).present = live.isNotEmpty;
     }
@@ -1070,12 +1078,12 @@ class _GroupedListState extends State<_GroupedList> {
                       child: Text(label, style: theme.textTheme.labelLargeEmphasized.copyWith(color: theme.colorScheme.primary)),
                     ),
                   );
-                case _RowEntry(:final key, :final thread, :final index, :final size):
+                case _RowEntry(:final key, :final thread, :final index, :final size, :final previousKey, :final nextKey):
                   return Presence(
                     key: key,
                     present: !_leaving.contains(thread.key),
                     appear: _arriving.contains(thread.key),
-                    child: _tile(thread, index, size),
+                    child: _tile(thread, index, size, previousKey, nextKey),
                   );
               }
             },
@@ -1109,6 +1117,8 @@ final class _RowEntry extends _Entry {
   late final Key key = ValueKey(thread.key);
   int index = 0;
   int size = 1;
+  String? previousKey;
+  String? nextKey;
 }
 
 Shader _createFadeShader(Rect bounds, double topFactor, double bottomFactor) {

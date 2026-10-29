@@ -88,6 +88,7 @@ You can give the same JSON to other people so they skip these steps, or build Pl
 | Tokens and passwords | System keyring, or a private file if none is available |
 | Autostart entry | `~/.config/autostart/org.atinus.plume.desktop` |
 | Default mail app | `~/.config/mimeapps.list` |
+| Graphics engine (Settings → System) | `~/.local/share/plume/graphics-engine` |
 
 ## Architecture
 
@@ -119,8 +120,18 @@ build/linux/x64/debug/bundle/plume 'mailto:me@example.org?subject=Hi'  # open a 
 
 Set `PLUME_ALLOW_MULTIPLE_INSTANCES=1` to run more than one instance during development.
 
+Judge smoothness only in profile or release builds (`flutter run --profile -d linux`); debug builds always stutter. Flutter's frame timings and DevTools can't see frames that reach the screen late, so measure those with the frame probe:
+
+```sh
+flutter build linux --profile -t tool/frame_probe/main.dart
+PLUME_ALLOW_MULTIPLE_INSTANCES=1 WAYLAND_DEBUG=client build/linux/x64/profile/bundle/plume app \
+  > /tmp/p.out 2> /tmp/p.wl
+python3 tool/frame_probe/pacing.py /tmp/p.out /tmp/p.wl   # also: minimal, idle
+```
+
 ## Known limitations
 
 - GNOME needs the AppIndicator extension to show the tray icon
+- Plume only builds its screen-reader tree while AT-SPI reports an assistive technology (`org.a11y.Status`, as Qt and the browsers check), because Flutter's Linux embedder would otherwise update it on every animation frame. Set `GNOME_ACCESSIBILITY=1` to force it on.
 - Snooze and scheduled send are unavailable for Gmail
 - IMAP accounts: restoring a conversation from Trash moves all of it to the Inbox

@@ -1,0 +1,4 @@
+#!/bin/sh
+# Starts Plume from inside the AppImage.
+here="$(dirname "$(readlink -f "$0")")"
+exec "$here/usr/bin/plume" "$@"

@@ -9,6 +9,7 @@ import 'package:plume_store/plume_store.dart';
 
 import 'config.dart';
 import 'demo/demo_provider.dart';
+import 'platform/linux/graphics_engine.dart';
 import 'services/accounts.dart';
 import 'services/desktop.dart';
 import 'services/platform_desktop.dart';
@@ -53,6 +54,7 @@ Future<Services> bootstrap(List<String> args) async {
     secrets: secrets,
     accounts: accounts,
     initialSettings: settings,
+    graphicsEngine: Platform.isLinux ? GraphicsEngineSetting.load(dataDir.path) : null,
   );
 }
 
