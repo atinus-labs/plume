@@ -147,8 +147,9 @@ class _ThreadTileState extends ConsumerState<ThreadTile> {
                     ),
                     const SizedBox(width: 14),
                     Expanded(
-                      // Reading a conversation relaxes its weight instead of
-                      // snapping it: the variable font tweens between them.
+                      // Reading a conversation eases its colour back. The
+                      // weight changes in one step: tweening it would lay the
+                      // text out again with a new font instance every frame.
                       child: SpringBuilder(
                         value: unread ? 1 : 0,
                         spring: Spring.effectsSlow,
@@ -173,7 +174,7 @@ class _ThreadTileState extends ConsumerState<ThreadTile> {
                                         ]),
                                         maxLines: 1,
                                         overflow: TextOverflow.ellipsis,
-                                        style: withWeight(text.titleSmall!, 550 + 150 * w).copyWith(color: fg),
+                                        style: withWeight(text.titleSmall!, unread ? 700 : 550).copyWith(color: fg),
                                       ),
                                     ),
                                     const SizedBox(width: 8),
@@ -181,7 +182,6 @@ class _ThreadTileState extends ConsumerState<ThreadTile> {
                                       thread: thread,
                                       hover: _hover && !selectionMode,
                                       unread: unread,
-                                      emphasis: w,
                                       color: open ? muted : Color.lerp(muted, scheme.primary, w)!,
                                       accountColor: widget.showAccountDot && widget.account != null
                                           ? harmonize(Color(widget.account!.color), scheme)
@@ -203,7 +203,7 @@ class _ThreadTileState extends ConsumerState<ThreadTile> {
                                       thread.subject.isEmpty ? '(no subject)' : thread.subject,
                                       maxLines: 1,
                                       overflow: TextOverflow.ellipsis,
-                                      style: withWeight(text.bodyMedium!, 400 + 250 * w).copyWith(color: fg),
+                                      style: withWeight(text.bodyMedium!, unread ? 650 : 400).copyWith(color: fg),
                                     ),
                                   ),
                                   _Star(flagged: thread.isFlagged),
@@ -275,7 +275,6 @@ class _Trailing extends ConsumerWidget {
     required this.thread,
     required this.hover,
     required this.unread,
-    required this.emphasis,
     required this.color,
     this.accountColor,
   });
@@ -283,9 +282,6 @@ class _Trailing extends ConsumerWidget {
   final ThreadSummary thread;
   final bool hover;
   final bool unread;
-
-  /// 0 for read, 1 for unread, in between while it changes.
-  final double emphasis;
   final Color color;
   final Color? accountColor;
 
@@ -305,7 +301,9 @@ class _Trailing extends ConsumerWidget {
           ),
         Text(
           listDate(thread.lastDate),
-          style: withWeight(theme.textTheme.labelMedium!, 550 + 150 * emphasis).copyWith(color: color),
+          // Same-width digits keep the times in the column lined up.
+          style: withWeight(theme.textTheme.labelMedium!, unread ? 700 : 550)
+              .copyWith(color: color, fontFeatures: const [FontFeature.tabularFigures()]),
         ),
       ],
     );

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:typed_data';
 
@@ -9,10 +10,14 @@ import '../shapes.dart';
 /// The M3 Expressive loading indicator: a shape that morphs through the
 /// expressive shape sequence while rotating.
 class LoadingIndicator extends StatefulWidget {
-  const LoadingIndicator({super.key, this.size = 48, this.color, this.contained = false});
+  const LoadingIndicator({super.key, this.size = 48, this.color, this.contained = false, this.delay = Duration.zero});
 
   final double size;
   final Color? color;
+
+  /// Shows nothing until loading has taken this long, so quick loads never
+  /// flash an indicator.
+  final Duration delay;
 
   /// Draws the indicator on a circular container, for use over content.
   final bool contained;
@@ -26,10 +31,26 @@ class _LoadingIndicatorState extends State<LoadingIndicator> with SingleTickerPr
   late final AnimationController _controller = AnimationController(
     vsync: this,
     duration: Duration(milliseconds: _morphMs * Shapes.loadingSequence.length),
-  )..repeat();
+  );
+  Timer? _wait;
+  late bool _shown = widget.delay == Duration.zero;
+
+  @override
+  void initState() {
+    super.initState();
+    if (_shown) {
+      _controller.repeat();
+    } else {
+      _wait = Timer(widget.delay, () {
+        setState(() => _shown = true);
+        _controller.repeat();
+      });
+    }
+  }
 
   @override
   void dispose() {
+    _wait?.cancel();
     _controller.dispose();
     super.dispose();
   }
@@ -44,6 +65,7 @@ class _LoadingIndicatorState extends State<LoadingIndicator> with SingleTickerPr
         painter: _MorphPainter(_controller, color),
       ),
     );
+    if (!_shown) return SizedBox.square(dimension: widget.size);
     return Semantics(
       label: 'Loading',
       child: SizedBox.square(

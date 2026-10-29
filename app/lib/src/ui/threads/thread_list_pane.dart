@@ -840,6 +840,31 @@ class _GroupedListState extends State<_GroupedList> {
   /// Each row's last place in its group, so a leaving row keeps its corners.
   final _lastPlace = <String, (int, int)>{};
 
+  /// The widget last built for each row. An unchanged row gets the same
+  /// widget back, so a list update (one thread read, say) rebuilds only the
+  /// rows that changed.
+  final _tiles = <String, ThreadTile>{};
+
+  ThreadTile _tile(ThreadSummary thread, int index, int size) {
+    final account = widget.accounts[thread.accountId];
+    final old = _tiles[thread.key];
+    if (old != null &&
+        old.thread == thread &&
+        old.index == index &&
+        old.groupSize == size &&
+        old.account == account &&
+        old.showAccountDot == widget.unified) {
+      return old;
+    }
+    return _tiles[thread.key] = ThreadTile(
+      thread: thread,
+      index: index,
+      groupSize: size,
+      account: account,
+      showAccountDot: widget.unified,
+    );
+  }
+
   @override
   void initState() {
     super.initState();
@@ -991,6 +1016,8 @@ class _GroupedListState extends State<_GroupedList> {
   Widget build(BuildContext context) {
     final entries = _entries();
     final indexOf = <Key, int>{for (var i = 0; i < entries.length; i++) entries[i].key: i};
+    final onScreen = {for (final e in entries) if (e case _RowEntry(:final thread)) thread.key};
+    _tiles.removeWhere((key, _) => !onScreen.contains(key));
 
     final theme = Theme.of(context);
     return Scrollbar(
@@ -1026,7 +1053,8 @@ class _GroupedListState extends State<_GroupedList> {
             key: const PageStorageKey('threads'),
             controller: widget.controller,
             clipBehavior: Clip.none,
-            padding: const EdgeInsets.fromLTRB(8, 0, 8, 24),
+            // Room below the last row for anything floating over the list.
+            padding: EdgeInsets.fromLTRB(8, 0, 8, 24 + MediaQuery.paddingOf(context).bottom),
             itemCount: entries.length + (widget.footer == null ? 0 : 1),
             findChildIndexCallback: (key) => indexOf[key],
             itemBuilder: (context, i) {
@@ -1047,13 +1075,7 @@ class _GroupedListState extends State<_GroupedList> {
                     key: key,
                     present: !_leaving.contains(thread.key),
                     appear: _arriving.contains(thread.key),
-                    child: ThreadTile(
-                      thread: thread,
-                      index: index,
-                      groupSize: size,
-                      account: widget.accounts[thread.accountId],
-                      showAccountDot: widget.unified,
-                    ),
+                    child: _tile(thread, index, size),
                   );
               }
             },

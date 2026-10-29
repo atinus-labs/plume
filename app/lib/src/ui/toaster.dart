@@ -228,6 +228,10 @@ class ToasterHost extends StatefulWidget {
 }
 
 class _ToasterHostState extends State<ToasterHost> {
+  // The host sits above the Navigator, so toasts get an overlay of their own
+  // for things like the close button's tooltip.
+  final _entry = OverlayEntry(builder: (_) => const ToasterStack());
+
   @override
   void initState() {
     super.initState();
@@ -245,8 +249,8 @@ class _ToasterHostState extends State<ToasterHost> {
     return Stack(
       children: [
         widget.child,
-        const Positioned.fill(
-          child: ToasterStack(),
+        Positioned.fill(
+          child: Overlay(initialEntries: [_entry]),
         ),
       ],
     );
@@ -350,10 +354,10 @@ class _ToasterStackState extends State<ToasterStack> {
                   behavior: HitTestBehavior.deferToChild,
                   child: ConstrainedBox(
                     constraints: const BoxConstraints(maxWidth: 420),
-                    child: AnimatedContainer(
-                      duration: const Duration(milliseconds: 250),
-                      curve: Curves.easeOutCubic,
-                      height: containerHeight,
+                    child: SpringBuilder(
+                      value: containerHeight,
+                      spring: Spring.standard,
+                      builder: (context, height, child) => SizedBox(height: math.max(0, height), child: child),
                       child: Stack(
                         clipBehavior: Clip.none,
                         alignment: Alignment.bottomCenter,
@@ -415,22 +419,19 @@ class _ToasterStackState extends State<ToasterStack> {
     final double targetScale = hovered ? 1.0 : foldedScale;
     final double targetOpacity = hovered ? 1.0 : foldedOpacity;
 
-    return AnimatedPositioned(
+    // Cards fan out and fold back on springs, so hovering in and out quickly
+    // never jumps.
+    return SpringBuilder(
       key: ValueKey(item.id),
-      duration: const Duration(milliseconds: 250),
-      curve: Curves.easeOutCubic,
-      left: 0,
-      right: 0,
-      bottom: targetBottom,
-      child: AnimatedScale(
-        duration: const Duration(milliseconds: 250),
-        curve: Curves.easeOutCubic,
-        alignment: Alignment.bottomCenter,
-        scale: targetScale,
-        child: AnimatedOpacity(
-          duration: const Duration(milliseconds: 200),
-          curve: Curves.easeOutCubic,
-          opacity: targetOpacity,
+      value: targetBottom,
+      builder: (context, bottom, child) => Positioned(left: 0, right: 0, bottom: bottom, child: child!),
+      child: SpringBuilder(
+        value: targetScale,
+        builder: (context, scale, child) => Transform.scale(alignment: Alignment.bottomCenter, scale: scale, child: child),
+        child: SpringBuilder(
+          value: targetOpacity,
+          spring: Spring.effects,
+          builder: (context, opacity, child) => Opacity(opacity: unit(opacity), child: child),
           child: _MeasureSize(
             onChange: (size) {
               if (_cardHeights[item.id] != size.height) {
@@ -479,33 +480,18 @@ class _ToastCard extends StatefulWidget {
 }
 
 class _ToastCardState extends State<_ToastCard> with SingleTickerProviderStateMixin {
-  late final AnimationController _controller;
-  late final Animation<double> _fadeAnimation;
-  late final Animation<Offset> _slideAnimation;
+  /// 0 is off screen below, 1 in place.
+  late final _controller = AnimationController.unbounded(vsync: this, value: 0);
   bool _dismissing = false;
 
   @override
   void initState() {
     super.initState();
-    _controller = AnimationController(
-      vsync: this,
-      duration: const Duration(milliseconds: 220),
-      reverseDuration: const Duration(milliseconds: 160),
-    );
-    _fadeAnimation = CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic);
-    _slideAnimation = Tween<Offset>(
-      begin: const Offset(0, 0.35),
-      end: Offset.zero,
-    ).animate(CurvedAnimation(parent: _controller, curve: Curves.easeOutCubic));
-
-    _controller.addStatusListener((status) {
-      if (status == AnimationStatus.dismissed && _dismissing) {
-        widget.onDismissed();
-      }
-    });
-
     widget.item.dismissAction = _triggerDismiss;
-    _controller.forward();
+    _controller.addStatusListener((status) {
+      if (status == AnimationStatus.completed && _dismissing) widget.onDismissed();
+    });
+    _controller.animateWith(Spring.spatial.simulate(0, 1));
   }
 
   @override
@@ -517,7 +503,8 @@ class _ToastCardState extends State<_ToastCard> with SingleTickerProviderStateMi
   void _triggerDismiss() {
     if (_dismissing || !mounted) return;
     _dismissing = true;
-    _controller.reverse();
+    // Leaving is quicker than arriving.
+    _controller.animateWith(Spring.standardFast.simulate(_controller.value, 0, velocity: _controller.velocity));
   }
 
   @override
@@ -532,20 +519,21 @@ class _ToastCardState extends State<_ToastCard> with SingleTickerProviderStateMi
 
   @override
   Widget build(BuildContext context) {
-    return FadeTransition(
-      opacity: _fadeAnimation,
-      child: SlideTransition(
-        position: _slideAnimation,
-        child: MouseRegion(
-          onEnter: (_) => widget.onEnter(),
-          onExit: (_) => widget.onExit(),
-          hitTestBehavior: HitTestBehavior.translucent,
-          child: _ToastView(
-            item: widget.item,
-            isFront: widget.isFront,
-            isHovered: widget.isHovered,
-            onDismiss: _triggerDismiss,
-          ),
+    return AnimatedBuilder(
+      animation: _controller,
+      builder: (context, child) => Opacity(
+        opacity: unit(_controller.value),
+        child: FractionalTranslation(translation: Offset(0, 0.35 * (1 - _controller.value)), child: child),
+      ),
+      child: MouseRegion(
+        onEnter: (_) => widget.onEnter(),
+        onExit: (_) => widget.onExit(),
+        hitTestBehavior: HitTestBehavior.translucent,
+        child: _ToastView(
+          item: widget.item,
+          isFront: widget.isFront,
+          isHovered: widget.isHovered,
+          onDismiss: _triggerDismiss,
         ),
       ),
     );

@@ -105,7 +105,7 @@ void main() {
 
     // Third toast is on front (bottom: 0, scale: 1.0)
     // Older toasts are stacked behind with peeking tops
-    expect(find.byType(AnimatedPositioned), findsNWidgets(3));
+    expect(find.descendant(of: find.byType(ToasterStack), matching: find.byType(Positioned)), findsNWidgets(3));
   });
 
   testWidgets('closing front toast in the stack leaves the other toasts intact and shifts deck forward', (tester) async {

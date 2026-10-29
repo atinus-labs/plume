@@ -30,13 +30,22 @@ class ComposePanel extends ConsumerStatefulWidget {
     super.key,
     required this.request,
     required this.maximized,
+    this.fullScreen = false,
     this.dockLeft = false,
+    this.animateIn = true,
     this.onDrag,
   });
 
   final ComposeRequest request;
   final bool maximized;
+
+  /// Fills a narrow window, without minimise or full size.
+  final bool fullScreen;
   final bool dockLeft;
+
+  /// Rises into place when first shown; off when the host animates the
+  /// window in from the control that opened it.
+  final bool animateIn;
   final void Function(Offset delta)? onDrag;
 
   @override
@@ -65,6 +74,7 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
   String? _quotedText;
   bool _showQuote = false;
   bool _minimized = false;
+  late final bool _animateIn = widget.animateIn;
   late String? _draftId = widget.request.draftId;
   Timer? _autosave;
   String _saveState = '';
@@ -451,10 +461,16 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final size = MediaQuery.sizeOf(context);
-    final width = widget.maximized
+    final full = widget.fullScreen;
+    final minimized = _minimized && !full;
+    final width = full
+        ? null
+        : widget.maximized
         ? (size.width - 64).clamp(400.0, 1040.0)
         : 560.0;
-    final height = _minimized
+    final height = full
+        ? null
+        : minimized
         ? 56.0
         : (widget.maximized
               ? size.height - 64
@@ -469,11 +485,13 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
 
     final alignment = widget.maximized
         ? Alignment.center
+        : full
+        ? Alignment.bottomCenter
         : (widget.dockLeft ? Alignment.bottomLeft : Alignment.bottomRight);
-    final canDrag = !widget.maximized;
+    final canDrag = !widget.maximized && !full;
 
     final panel = TweenAnimationBuilder<double>(
-      tween: Tween(begin: 0, end: 1),
+      tween: Tween(begin: _animateIn ? 0 : 1, end: 1),
       duration: Spring.spatial.duration,
       curve: Spring.spatial.curve,
       builder: (context, t, child) => Transform(
@@ -494,7 +512,7 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
           dragStartBehavior: DragStartBehavior.down,
           onPanUpdate: canDrag ? (details) => _handleDrag(details.delta) : null,
           child: Padding(
-            padding: EdgeInsets.only(bottom: widget.maximized ? 0 : 16),
+            padding: EdgeInsets.only(bottom: widget.maximized || full ? 0 : 16),
             child: AnimatedContainer(
               duration: Spring.spatial.duration,
               curve: Spring.spatial.curve,
@@ -502,20 +520,21 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
               height: height,
               child: Material(
                 color: scheme.surfaceContainerLow,
-                elevation: 8,
+                elevation: full ? 0 : 8,
                 shadowColor: scheme.shadow.withValues(alpha: 0.45),
                 shape: RoundedRectangleBorder(
-                  borderRadius: Corners.all(Corners.extraLarge),
+                  borderRadius: Corners.all(full ? 0 : Corners.extraLarge),
                 ),
                 clipBehavior: Clip.antiAlias,
                 child: Column(
                   children: [
-                    if (_minimized)
+                    if (minimized)
                       Expanded(
                         child: _TitleBar(
                           title: title,
-                          minimized: _minimized,
+                          minimized: minimized,
                           maximized: widget.maximized,
+                          fullScreen: full,
                           onMinimize: () =>
                               setState(() => _minimized = !_minimized),
                           onMaximize: () => ref
@@ -528,8 +547,9 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
                     else ...[
                       _TitleBar(
                         title: title,
-                        minimized: _minimized,
+                        minimized: minimized,
                         maximized: widget.maximized,
+                        fullScreen: full,
                         onMinimize: () =>
                             setState(() => _minimized = !_minimized),
                         onMaximize: () => ref
@@ -740,13 +760,16 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
           padding: const EdgeInsets.fromLTRB(16, 4, 12, 14),
           child: Row(
             children: [
-              FilledButton.icon(
-                onPressed: _send,
-                style: const ButtonStyle(
-                  minimumSize: WidgetStatePropertyAll(Size(112, 48)),
+              Tooltip(
+                message: 'Send (Ctrl+Enter)',
+                child: FilledButton.icon(
+                  onPressed: _send,
+                  style: const ButtonStyle(
+                    minimumSize: WidgetStatePropertyAll(Size(112, 48)),
+                  ),
+                  icon: const Icon(Symbols.send_rounded, size: 20),
+                  label: const Text('Send'),
                 ),
-                icon: const Icon(Symbols.send_rounded, size: 20),
-                label: const Text('Send'),
               ),
               const SizedBox(width: 6),
               IconButton(
@@ -772,16 +795,6 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
                   overflow: TextOverflow.ellipsis,
                   style: theme.textTheme.bodySmall?.copyWith(
                     color: scheme.onSurfaceVariant,
-                  ),
-                ),
-              ),
-              Flexible(
-                child: Text(
-                  'Ctrl+Enter to send',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: theme.textTheme.labelSmall?.copyWith(
-                    color: scheme.outline,
                   ),
                 ),
               ),
@@ -819,6 +832,7 @@ class _TitleBar extends StatelessWidget {
     required this.title,
     required this.minimized,
     required this.maximized,
+    required this.fullScreen,
     required this.onMinimize,
     required this.onMaximize,
     required this.onClose,
@@ -828,6 +842,7 @@ class _TitleBar extends StatelessWidget {
   final String title;
   final bool minimized;
   final bool maximized;
+  final bool fullScreen;
   final VoidCallback onMinimize;
   final VoidCallback onMaximize;
   final VoidCallback onClose;
@@ -863,17 +878,18 @@ class _TitleBar extends StatelessWidget {
                       style: theme.textTheme.titleSmallEmphasized,
                     ),
                   ),
-                  IconButton(
-                    tooltip: minimized ? 'Restore' : 'Minimise',
-                    onPressed: onMinimize,
-                    icon: Icon(
-                      minimized
-                          ? Symbols.expand_less_rounded
-                          : Symbols.minimize_rounded,
-                      size: 20,
+                  if (!fullScreen)
+                    IconButton(
+                      tooltip: minimized ? 'Restore' : 'Minimise',
+                      onPressed: onMinimize,
+                      icon: Icon(
+                        minimized
+                            ? Symbols.expand_less_rounded
+                            : Symbols.minimize_rounded,
+                        size: 20,
+                      ),
                     ),
-                  ),
-                  if (!minimized)
+                  if (!minimized && !fullScreen)
                     IconButton(
                       tooltip: maximized ? 'Exit full size' : 'Full size',
                       onPressed: onMaximize,

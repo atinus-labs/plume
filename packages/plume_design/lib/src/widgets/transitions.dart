@@ -9,7 +9,8 @@ bool reduceMotion(BuildContext context) => MediaQuery.maybeDisableAnimationsOf(c
 /// M3 shared-axis transition for an [AnimatedSwitcher], for content with a
 /// spatial or navigational relationship (next conversation, list → detail,
 /// neighbouring tab). Both sides travel along [axis] in the direction of
-/// navigation and fade through nothing, so old and new never overlap.
+/// navigation; the new side starts fading in just before the old one is
+/// gone, so the switch never shows an empty frame.
 ///
 /// [direction] is 1 when moving towards the end of the axis (down, right)
 /// and -1 when moving back.
@@ -24,8 +25,8 @@ AnimatedSwitcherTransitionBuilder sharedAxis({Axis axis = Axis.vertical, int dir
         );
 
 /// M3 fade-through for an [AnimatedSwitcher], for content without a spatial
-/// relationship: the old content fades out quickly, then the new one fades
-/// in while settling from a slightly smaller scale.
+/// relationship: the old content fades out quickly as the new one fades in,
+/// settling from a slightly smaller scale.
 Widget fadeThrough(Widget child, Animation<double> animation) => DualTransitionBuilder(
       animation: animation,
       forwardBuilder: (context, a, child) =>
@@ -56,8 +57,9 @@ class _AxisFade extends AnimatedWidget {
   final double scaleFrom;
   final Widget? child;
 
-  static const _fadeIn = Interval(0.3, 1, curve: Curves.easeOut);
-  static const _fadeOut = Interval(0, 0.3, curve: Curves.easeIn);
+  // The two overlap briefly, so a switch never passes through an empty frame.
+  static const _fadeIn = Interval(0.2, 0.9, curve: Curves.easeOut);
+  static const _fadeOut = Interval(0, 0.35, curve: Curves.easeIn);
 
   @override
   Widget build(BuildContext context) {

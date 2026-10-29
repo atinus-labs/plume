@@ -83,7 +83,11 @@ class _MessageCardState extends ConsumerState<MessageCard> {
     );
   }
 
-  Widget _collapsedView(ThemeData theme, Message m, Address? from, bool isMe) {
+  Widget _collapsedView(ThemeData theme, Message m, Address? from, bool isMe) => LayoutBuilder(
+        builder: (context, constraints) => _collapsedRow(theme, m, from, isMe, narrow: constraints.maxWidth < _narrowCard),
+      );
+
+  Widget _collapsedRow(ThemeData theme, Message m, Address? from, bool isMe, {required bool narrow}) {
     final scheme = theme.colorScheme;
     return InkWell(
       onTap: () => setState(() => _expanded = true),
@@ -94,7 +98,7 @@ class _MessageCardState extends ConsumerState<MessageCard> {
             MorphAvatar(name: from?.displayName ?? '?', colorKey: from?.email ?? m.id, image: from?.email != null ? ref.watch(senderAvatarProvider(from!.email)).value : null, size: 32),
             const SizedBox(width: 14),
             SizedBox(
-              width: 160,
+              width: narrow ? 104 : 160,
               child: Text(
                 isMe ? 'me' : (from?.displayName ?? '(unknown)'),
                 maxLines: 1,
@@ -107,18 +111,24 @@ class _MessageCardState extends ConsumerState<MessageCard> {
                   style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant)),
             ),
             const SizedBox(width: 12),
-            Text(listDate(m.date), style: theme.textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant)),
+            Text(listDate(m.date), style: theme.textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant, fontFeatures: const [FontFeature.tabularFigures()])),
           ],
         ),
       ),
     );
   }
 
-  Widget _expandedView(ThemeData theme, Message m, Address? from, bool isMe) {
+  Widget _expandedView(ThemeData theme, Message m, Address? from, bool isMe) => LayoutBuilder(
+        builder: (context, constraints) => _expandedBody(theme, m, from, isMe, narrow: constraints.maxWidth < _narrowCard),
+      );
+
+  Widget _expandedBody(ThemeData theme, Message m, Address? from, bool isMe, {required bool narrow}) {
     final scheme = theme.colorScheme;
     final recipients = [...m.to, ...m.cc];
     String nameOf(Address a) => a.email.toLowerCase() == widget.myEmail.toLowerCase() ? 'me' : a.shortName;
     final toLine = recipients.isEmpty ? 'undisclosed recipients' : recipients.map(nameOf).join(', ');
+    // Body and details line up with the sender's name.
+    final indent = narrow ? 0.0 : 54.0;
 
     return Padding(
       padding: const EdgeInsets.fromLTRB(20, 16, 12, 20),
@@ -137,15 +147,20 @@ class _MessageCardState extends ConsumerState<MessageCard> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Wrap(
-                        crossAxisAlignment: WrapCrossAlignment.center,
-                        spacing: 8,
-                        children: [
-                          Text(isMe ? 'me' : (from?.displayName ?? '(unknown sender)'), style: theme.textTheme.titleSmallEmphasized),
-                          if (from != null)
-                            SelectableText(from.email, style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
-                        ],
-                      ),
+                      // Narrow cards keep the name; the address is one tap away in the details.
+                      if (narrow)
+                        Text(isMe ? 'me' : (from?.displayName ?? '(unknown sender)'),
+                            maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleSmallEmphasized)
+                      else
+                        Wrap(
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          spacing: 8,
+                          children: [
+                            Text(isMe ? 'me' : (from?.displayName ?? '(unknown sender)'), style: theme.textTheme.titleSmallEmphasized),
+                            if (from != null)
+                              SelectableText(from.email, style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
+                          ],
+                        ),
                       const SizedBox(height: 2),
                       InkWell(
                         borderRadius: Corners.all(Corners.small),
@@ -171,7 +186,7 @@ class _MessageCardState extends ConsumerState<MessageCard> {
                       message: fullDate(m.date),
                       child: Padding(
                         padding: const EdgeInsets.symmetric(horizontal: 8),
-                        child: Text(listDate(m.date), style: theme.textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant)),
+                        child: Text(listDate(m.date), style: theme.textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant, fontFeatures: const [FontFeature.tabularFigures()])),
                       ),
                     ),
                     IconButton(
@@ -183,11 +198,15 @@ class _MessageCardState extends ConsumerState<MessageCard> {
                             color: m.isFlagged ? const Color(0xFFE8A200) : scheme.onSurfaceVariant),
                       ),
                     ),
-                    IconButton(
-                      tooltip: 'Reply',
-                      onPressed: () => ref.read(composeProvider.notifier).reply(m, all: false),
-                      icon: const Icon(Symbols.reply_rounded),
-                    ),
+                    if (!narrow)
+                      Builder(
+                        builder: (context) => IconButton(
+                          tooltip: 'Reply',
+                          // The reply grows out of this button.
+                          onPressed: () => ref.read(composeProvider.notifier).reply(m, all: false, origin: globalRectOf(context)),
+                          icon: const Icon(Symbols.reply_rounded),
+                        ),
+                      ),
                     _MessageMenu(message: m),
                   ],
                 ),
@@ -198,17 +217,17 @@ class _MessageCardState extends ConsumerState<MessageCard> {
             duration: Spring.standard.duration,
             curve: Spring.standard.curve,
             alignment: Alignment.topCenter,
-            child: _details ? _DetailsTable(message: m) : const SizedBox(width: double.infinity),
+            child: _details ? _DetailsTable(message: m, indent: indent) : const SizedBox(width: double.infinity),
           ),
           const SizedBox(height: 16),
           Padding(
-            padding: const EdgeInsets.only(left: 54, right: 8),
+            padding: EdgeInsets.only(left: indent, right: 8),
             child: MessageBodyView(message: m),
           ),
           if (m.hasAttachments) ...[
             const SizedBox(height: 16),
             Padding(
-              padding: const EdgeInsets.only(left: 54, right: 8),
+              padding: EdgeInsets.only(left: indent, right: 8),
               child: Wrap(
                 spacing: 8,
                 runSpacing: 8,
@@ -222,10 +241,16 @@ class _MessageCardState extends ConsumerState<MessageCard> {
   }
 }
 
+/// Cards narrower than this (a narrow window, or a narrow reader beside the
+/// list) drop the sender's address and the indent under the avatar, leaving
+/// the width to the name and the message.
+const _narrowCard = 520.0;
+
 class _DetailsTable extends StatelessWidget {
-  const _DetailsTable({required this.message});
+  const _DetailsTable({required this.message, required this.indent});
 
   final Message message;
+  final double indent;
 
   @override
   Widget build(BuildContext context) {
@@ -241,7 +266,7 @@ class _DetailsTable extends StatelessWidget {
       ('Subject', message.subject),
     ];
     return Padding(
-      padding: const EdgeInsets.only(left: 54, top: 12, right: 8),
+      padding: EdgeInsets.only(left: indent, top: 12, right: 8),
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(

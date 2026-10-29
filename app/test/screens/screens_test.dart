@@ -2,7 +2,11 @@
 //
 //   PLUME_SCREENS=1 flutter test test/screens/screens_test.dart
 //
-// Images land in build/screens/. Skipped unless PLUME_SCREENS is set.
+// Every scenario is drawn at each window size in light and dark, into
+// build/screens/<size>/. Motion scenarios stop the clock partway through an
+// animation and write one filmstrip per motion to build/screens/motion/.
+// PLUME_SCREEN_SIZES=phone,half limits the sizes. A layout overflow fails the
+// test. Skipped unless PLUME_SCREENS is set.
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
@@ -11,14 +15,10 @@ import 'dart:ui' as ui;
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
+import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:plume/src/demo/demo_provider.dart';
-import 'package:plume/src/services/accounts.dart';
-import 'package:plume/src/services/desktop.dart';
-import 'package:plume/src/services/imap_connector.dart';
-import 'package:plume/src/services/secret_store.dart';
 import 'package:plume/src/state/mail.dart';
 import 'package:plume/src/state/navigation.dart';
 import 'package:plume/src/state/services.dart';
@@ -31,6 +31,8 @@ import 'package:plume/src/ui/onboarding/add_account.dart';
 import 'package:plume/src/ui/reader/reader_pane.dart';
 import 'package:plume_core/plume_core.dart';
 import 'package:plume_store/plume_store.dart';
+
+import '../support/demo_services.dart';
 
 final _enabled = Platform.environment['PLUME_SCREENS'] == '1';
 
@@ -56,39 +58,6 @@ Future<void> _loadFonts() async {
       '${_packageRoot('material_symbols_icons')}/lib/fonts/MaterialSymbolsRounded.ttf');
 }
 
-class _NoSecrets implements SecretStore {
-  @override
-  String get backend => 'test';
-  @override
-  Future<void> delete(String key) async {}
-  @override
-  Future<String?> read(String key) async => null;
-  @override
-  Future<void> write(String key, String value) async {}
-}
-
-Future<Services> _services() async {
-  final store = DriftMailStore.inMemory();
-  final accounts = AccountsService(store: store, connectors: [DemoConnector(), ImapConnector(_NoSecrets())]);
-  final engine = MailEngine(store: store, factories: accounts.factories, tokenSourceFor: accounts.tokenSourceFor);
-  accounts.engine = engine;
-  await engine.start();
-  await accounts.add('demo');
-  // Let the initial sync land.
-  for (var i = 0; i < 50; i++) {
-    await Future<void>.delayed(const Duration(milliseconds: 20));
-    if ((engine.currentStatuses.values.firstOrNull?.initialSyncDone ?? false)) break;
-  }
-  return Services(
-    store: store,
-    engine: engine,
-    desktop: HeadlessDesktop(),
-    secrets: _NoSecrets(),
-    accounts: accounts,
-    initialSettings: const AppSettings(),
-  );
-}
-
 typedef Step = Future<void> Function(WidgetTester tester, WidgetRef c);
 
 Future<void> _openAddAccount(WidgetTester t, WidgetRef c) async =>
@@ -107,7 +76,11 @@ final _scenarios = <String, List<Step>>{
   'welcome': [],
   'inbox': [],
   'settings_branding': [
-    (t, c) async => t.tap(find.text('Settings')),
+    (t, c) async {
+      await t.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await t.sendKeyEvent(LogicalKeyboardKey.comma);
+      await t.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    },
     (t, c) async => t.scrollUntilVisible(
       find.text('Version 0.1.0 · org.atinus.plume'),
       500,
@@ -222,80 +195,296 @@ final _scenarios = <String, List<Step>>{
   ],
 };
 
-void main() {
-  for (final brightness in [Brightness.dark, Brightness.light]) {
-    for (final entry in _scenarios.entries) {
-      testWidgets('${entry.key} ${brightness.name}', skip: !_enabled, (tester) async {
-        await tester.runAsync(_loadFonts);
-        // flutter_test draws shadows as solid outlines by default.
-        debugDisableShadows = false;
-        tester.view.physicalSize = const Size(1600, 1000);
-        tester.view.devicePixelRatio = 1;
-        tester.platformDispatcher.platformBrightnessTestValue = brightness;
-        addTearDown(tester.view.reset);
+const _sizes = {
+  'desktop': Size(1600, 1000),
+  // Half of a tiled 1920px screen: list and a narrow reader side by side.
+  'tiled': Size(960, 1000),
+  // Half of a tiled 1600px screen: one pane at a time beside the rail.
+  'half': Size(800, 1000),
+  'phone': Size(412, 900),
+};
 
-        final services = (await tester.runAsync(_services))!;
-        final boundary = GlobalKey();
-        final container = ProviderContainer(overrides: [
-          servicesProvider.overrideWithValue(services),
-          if (entry.key == 'welcome') accountsProvider.overrideWith((ref) => Stream.value(const [])),
-        ]);
-        late WidgetRef ref;
-        await tester.pumpWidget(UncontrolledProviderScope(
-          container: container,
-          child: RepaintBoundary(
-            key: boundary,
-            child: DecoratedBox(
-              decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(24),
-                border: Border.all(
-                  color: brightness == Brightness.dark ? const Color(0x33FFFFFF) : const Color(0x1F000000),
-                  width: 1,
-                ),
-              ),
-              position: DecorationPosition.foreground,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(24),
-                child: Consumer(builder: (context, r, child) {
-                  ref = r;
-                  return child!;
-                }, child: const PlumeApp()),
-              ),
+bool _sizeEnabled(String size) {
+  final only = Platform.environment['PLUME_SCREEN_SIZES'];
+  return only == null || only.split(',').contains(size);
+}
+
+/// An animation stopped partway: [setup] runs and settles, then [action]
+/// runs with the clock held, and a frame is taken [at] each number of
+/// milliseconds after it, plus one once everything has settled.
+class _Motion {
+  const _Motion({
+    this.setup = const [],
+    required this.action,
+    this.at = const [40, 90, 150, 240],
+    this.sizes = const {'desktop'},
+    this.crop,
+  });
+
+  final List<Step> setup;
+  final Step action;
+  final List<int> at;
+  final Set<String> sizes;
+
+  /// The part of the window worth looking at, for a window of the given size.
+  final Rect Function(Size window)? crop;
+}
+
+Rect _listArea(Size w) => const Rect.fromLTWH(270, 180, 430, 560);
+Rect _readerArea(Size w) => Rect.fromLTWH(w.width - 900, 0, 900, 700);
+Rect _composeArea(Size w) => Rect.fromLTWH(w.width - 820, w.height - 700, 820, 700);
+
+ThreadSummary _thread(WidgetRef c, String subject) =>
+    c.read(visibleThreadsProvider).value!.firstWhere((x) => x.subject.contains(subject));
+
+final _motions = <String, _Motion>{
+  // J: the next conversation comes up from below.
+  'open_next': _Motion(
+    setup: [(t, c) async => openThread(c, (c.read(visibleThreadsProvider).value!).first)],
+    action: (t, c) async => stepThread(c, 1),
+    crop: _readerArea,
+  ),
+  // The archived row closes up; the rows below rise into its place.
+  'archive': _Motion(
+    action: (t, c) async => applyThreadAction(c, MailAction.archive, [keyOf(c.read(visibleThreadsProvider).value![1])]),
+    at: const [60, 140, 240, 360],
+    crop: _listArea,
+  ),
+  'view_switch': _Motion(
+    action: (t, c) async =>
+        c.read(viewProvider.notifier).show(const MailView(ViewKind.inbox, category: MailCategory.promotions)),
+    crop: _listArea,
+  ),
+  'unfold': _Motion(
+    setup: [(t, c) async => openThread(c, _thread(c, 'offsite'))],
+    action: (t, c) async => t.tap(find.textContaining('older messages')),
+    at: const [60, 140, 240, 360],
+    crop: _readerArea,
+  ),
+  'compose_open': _Motion(
+    setup: [(t, c) async => openThread(c, (c.read(visibleThreadsProvider).value!).first)],
+    action: (t, c) async => c.read(composeProvider.notifier).newMessage(),
+    crop: _composeArea,
+  ),
+  'compose_close': _Motion(
+    setup: [
+      (t, c) async => openThread(c, (c.read(visibleThreadsProvider).value!).first),
+      (t, c) async => c.read(composeProvider.notifier).newMessage(),
+    ],
+    action: (t, c) async => c.read(composeProvider.notifier).close(c.read(composeProvider).last.id),
+    at: const [40, 90, 150, 210],
+    crop: _composeArea,
+  ),
+  'open_phone': _Motion(
+    action: (t, c) async => openThread(c, (c.read(visibleThreadsProvider).value!).first),
+    sizes: const {'phone'},
+  ),
+  // The reply toolbar stretches into the reply window.
+  'reply': _Motion(
+    setup: [(t, c) async => openThread(c, (c.read(visibleThreadsProvider).value!).first)],
+    action: (t, c) async => t.tap(find.widgetWithText(TextButton, 'Reply'), kind: PointerDeviceKind.mouse),
+    at: const [40, 100, 170, 260],
+    crop: _composeArea,
+  ),
+  // A reply closed without sending shrinks back into the toolbar.
+  'reply_close': _Motion(
+    setup: [
+      (t, c) async => openThread(c, (c.read(visibleThreadsProvider).value!).first),
+      (t, c) async => t.tap(find.widgetWithText(TextButton, 'Reply'), kind: PointerDeviceKind.mouse),
+    ],
+    action: (t, c) async => c.read(composeProvider.notifier).close(c.read(composeProvider).last.id),
+    at: const [40, 100, 170, 260],
+    crop: _composeArea,
+  ),
+  // The compose button grows into a full-window message.
+  'compose_phone': _Motion(
+    action: (t, c) async => t.tap(find.byTooltip('Compose (C)'), kind: PointerDeviceKind.mouse),
+    at: const [40, 100, 170, 260],
+    sizes: const {'phone'},
+  ),
+  // E presses the archive button, the row closes up and the next
+  // conversation comes in under a toolbar that stays put.
+  'archive_key': _Motion(
+    setup: [(t, c) async => openThread(c, (c.read(visibleThreadsProvider).value!).first)],
+    action: (t, c) async {
+      await t.sendKeyDownEvent(LogicalKeyboardKey.keyE, character: 'e');
+      await t.sendKeyUpEvent(LogicalKeyboardKey.keyE);
+    },
+    at: const [40, 100, 170, 260],
+    crop: (w) => const Rect.fromLTWH(270, 0, 820, 460),
+  ),
+};
+
+class _Harness {
+  _Harness._(this.tester, this.ref, this.boundary, this.container, this.services);
+
+  final WidgetTester tester;
+  final WidgetRef ref;
+  final GlobalKey boundary;
+  final ProviderContainer container;
+  final Services services;
+
+  static Future<_Harness> start(WidgetTester tester, String scenario, Size size, Brightness brightness) async {
+    await tester.runAsync(_loadFonts);
+    // flutter_test draws shadows as solid outlines by default.
+    debugDisableShadows = false;
+    tester.view.physicalSize = size;
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.platformBrightnessTestValue = brightness;
+    addTearDown(tester.view.reset);
+
+    final services = (await tester.runAsync(demoServices))!;
+    final boundary = GlobalKey();
+    final container = ProviderContainer(overrides: [
+      servicesProvider.overrideWithValue(services),
+      if (scenario == 'welcome') accountsProvider.overrideWith((ref) => Stream.value(const [])),
+    ]);
+    late WidgetRef ref;
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: RepaintBoundary(
+        key: boundary,
+        child: DecoratedBox(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(24),
+            border: Border.all(
+              color: brightness == Brightness.dark ? const Color(0x33FFFFFF) : const Color(0x1F000000),
+              width: 1,
             ),
           ),
-        ));
-        Future<void> settle() async {
-          for (var i = 0; i < 12; i++) {
-            await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 30)));
-            await tester.pump(const Duration(milliseconds: 100));
+          position: DecorationPosition.foreground,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(24),
+            child: Consumer(builder: (context, r, child) {
+              ref = r;
+              return child!;
+            }, child: const PlumeApp()),
+          ),
+        ),
+      ),
+    ));
+    final harness = _Harness._(tester, ref, boundary, container, services);
+    await harness.settle();
+    return harness;
+  }
+
+  Future<void> settle() async {
+    for (var i = 0; i < 12; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 30)));
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+  }
+
+  /// Lets database writes and streams land without moving the clock, so any
+  /// animation they start is still at its first frame.
+  Future<void> propagate() async {
+    for (var i = 0; i < 8; i++) {
+      await tester.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 15)));
+      await tester.pump(Duration.zero);
+    }
+  }
+
+  Future<ui.Image> capture() async {
+    final render = boundary.currentContext!.findRenderObject()! as RenderRepaintBoundary;
+    return (await tester.runAsync(() => render.toImage(pixelRatio: 1)))!;
+  }
+
+  Future<void> finish() async {
+    Toaster.instance.clear();
+    await tester.pumpWidget(const SizedBox());
+    container.dispose();
+    // Let debounce/retry timers started by the UI run out.
+    await tester.pump(const Duration(seconds: 30));
+    debugDisableShadows = true;
+    await tester.runAsync(() => services.engine.dispose());
+    await tester.runAsync(() => (services.store as DriftMailStore).close());
+  }
+}
+
+Future<void> _writePng(ui.Image image, String path) async {
+  final data = await image.toByteData(format: ui.ImageByteFormat.png);
+  final out = File(path);
+  out.parent.createSync(recursive: true);
+  out.writeAsBytesSync(data!.buffer.asUint8List());
+}
+
+/// Frames side by side, each labelled with its time.
+Future<ui.Image> _filmstrip(List<(String, ui.Image)> frames, Rect crop, Brightness brightness) {
+  const gap = 16.0;
+  const label = 32.0;
+  final dark = brightness == Brightness.dark;
+  final recorder = ui.PictureRecorder();
+  final canvas = Canvas(recorder);
+  final width = frames.length * crop.width + (frames.length + 1) * gap;
+  final height = crop.height + label + 2 * gap;
+  canvas.drawRect(Rect.fromLTWH(0, 0, width, height), Paint()..color = dark ? const Color(0xFF000000) : const Color(0xFFFFFFFF));
+  for (final (i, (name, image)) in frames.indexed) {
+    final x = gap + i * (crop.width + gap);
+    final dst = Rect.fromLTWH(x, gap, crop.width, crop.height);
+    canvas.drawImageRect(image, crop, dst, Paint()..filterQuality = FilterQuality.medium);
+    canvas.drawRect(dst, Paint()
+      ..style = PaintingStyle.stroke
+      ..color = dark ? const Color(0x55FFFFFF) : const Color(0x33000000));
+    final paragraph = (ui.ParagraphBuilder(ui.ParagraphStyle(fontFamily: 'packages/plume_design/Google Sans Flex', fontSize: 18))
+          ..pushStyle(ui.TextStyle(color: dark ? const Color(0xFFFFFFFF) : const Color(0xFF000000)))
+          ..addText(name))
+        .build()
+      ..layout(ui.ParagraphConstraints(width: crop.width));
+    canvas.drawParagraph(paragraph, Offset(x, gap + crop.height + 6));
+  }
+  return recorder.endRecording().toImage(width.ceil(), height.ceil());
+}
+
+void main() {
+  for (final brightness in [Brightness.dark, Brightness.light]) {
+    for (final MapEntry(key: sizeName, value: size) in _sizes.entries) {
+      for (final entry in _scenarios.entries) {
+        testWidgets('$sizeName ${entry.key} ${brightness.name}', skip: !_enabled || !_sizeEnabled(sizeName),
+            (tester) async {
+          final h = await _Harness.start(tester, entry.key, size, brightness);
+          for (final step in entry.value) {
+            await step(tester, h.ref);
+            await h.settle();
           }
-        }
-
-        await settle();
-        for (final step in entry.value) {
-          await step(tester, ref);
-          await settle();
-        }
-        await settle();
-
-        final render = boundary.currentContext!.findRenderObject()! as RenderRepaintBoundary;
-        final png = await tester.runAsync(() async {
-          final image = await render.toImage(pixelRatio: 1);
-          final data = await image.toByteData(format: ui.ImageByteFormat.png);
-          return data!.buffer.asUint8List();
+          await h.settle();
+          final image = await h.capture();
+          await tester.runAsync(() => _writePng(image, 'build/screens/$sizeName/${entry.key}_${brightness.name}.png'));
+          // Stillness: once settled, nothing may keep animating. On failure
+          // the report shows where each running animation was started.
+          SchedulerBinding.instance.debugAssertNoTransientCallbacks('Still animating after settling');
+          await h.finish();
         });
-        final out = File('build/screens/${entry.key}_${brightness.name}.png');
-        out.parent.createSync(recursive: true);
-        out.writeAsBytesSync(png!);
+      }
+    }
 
-        await tester.pumpWidget(const SizedBox());
-        container.dispose();
-        // Let debounce/retry timers started by the UI run out.
-        await tester.pump(const Duration(seconds: 30));
-        debugDisableShadows = true;
-        await tester.runAsync(() => services.engine.dispose());
-        await tester.runAsync(() => (services.store as DriftMailStore).close());
-      });
+    for (final entry in _motions.entries) {
+      final motion = entry.value;
+      for (final sizeName in motion.sizes) {
+        final size = _sizes[sizeName]!;
+        testWidgets('motion $sizeName ${entry.key} ${brightness.name}', skip: !_enabled || !_sizeEnabled(sizeName),
+            (tester) async {
+          final h = await _Harness.start(tester, entry.key, size, brightness);
+          for (final step in motion.setup) {
+            await step(tester, h.ref);
+            await h.settle();
+          }
+          final frames = <(String, ui.Image)>[('before', await h.capture())];
+          await motion.action(tester, h.ref);
+          await h.propagate();
+          var elapsed = 0;
+          for (final ms in motion.at) {
+            await tester.pump(Duration(milliseconds: ms - elapsed));
+            elapsed = ms;
+            frames.add(('$ms ms', await h.capture()));
+          }
+          await h.settle();
+          frames.add(('settled', await h.capture()));
+          final crop = motion.crop?.call(size) ?? Offset.zero & size;
+          final strip = (await tester.runAsync(() => _filmstrip(frames, crop, brightness)))!;
+          await tester.runAsync(() => _writePng(strip, 'build/screens/motion/${sizeName}_${entry.key}_${brightness.name}.png'));
+          await h.finish();
+        });
+      }
     }
   }
 }

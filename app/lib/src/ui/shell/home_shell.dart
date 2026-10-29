@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:material_symbols_icons/symbols.dart';
 import 'package:plume_core/plume_core.dart';
 import 'package:plume_design/plume_design.dart';
 
@@ -11,6 +12,7 @@ import '../../state/navigation.dart';
 import '../../state/services.dart';
 import '../../state/settings.dart';
 import '../actions.dart';
+import '../common/shortcut_echo.dart';
 import '../compose/compose_host.dart';
 import '../reader/mail_renderer.dart';
 import '../reader/reader_pane.dart';
@@ -68,7 +70,9 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     final desktop = ref.watch(desktopProvider);
     final settings = ref.watch(settingsProvider);
     final surfaces = PlumeSurfaces.of(context);
-    final open = ref.watch(openThreadProvider);
+    // Only whether one is open: moving between conversations leaves the
+    // shell alone.
+    final open = ref.watch(openThreadProvider.select((k) => k != null));
 
     return Focus(
       focusNode: _focus,
@@ -130,7 +134,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                             NavRailHost(expanded: false, onOpenSettings: _openSettings),
                             Expanded(
                               child: _ListDetail(
-                                showDetail: open != null,
+                                showDetail: open,
                                 list: const ThreadListPane(),
                                 detail: const Pane(child: ReaderPane(showBack: true)),
                               ),
@@ -139,11 +143,36 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                         ),
                       );
                     }
+                    // Without a rail, compose is a floating button over the list.
+                    final media = MediaQuery.of(context);
                     return Padding(
                       padding: EdgeInsets.only(top: top),
                       child: _ListDetail(
-                        showDetail: open != null,
-                        list: ThreadListPane(onOpenDrawer: () => _scaffold.currentState?.openDrawer()),
+                        showDetail: open,
+                        list: Stack(
+                          children: [
+                            MediaQuery(
+                              data: media.copyWith(padding: media.padding.copyWith(bottom: media.padding.bottom + 72)),
+                              child: ThreadListPane(onOpenDrawer: () => _scaffold.currentState?.openDrawer()),
+                            ),
+                            Positioned(
+                              right: 16,
+                              bottom: 16 + media.padding.bottom,
+                              child: ComposeAnchor(
+                                source: ComposeSource.compose,
+                                child: ShortcutEcho(
+                                  target: ShortcutTarget.compose,
+                                  shape: RoundedRectangleBorder(borderRadius: Corners.all(Corners.large)),
+                                  child: FloatingActionButton(
+                                    tooltip: 'Compose (C)',
+                                    onPressed: () => ref.read(composeProvider.notifier).newMessage(),
+                                    child: const Icon(Symbols.edit_rounded),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
                         detail: const Pane(radius: 0, child: ReaderPane(showBack: true)),
                       ),
                     );
@@ -191,25 +220,26 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       return detail?.messages.lastOrNull;
     }
 
-    bool handled(void Function() f) {
+    bool handled(void Function() f, [ShortcutTarget? echo]) {
       f();
+      if (echo != null) ref.read(shortcutEchoProvider.notifier).echo(echo);
       return true;
     }
 
     final shift = keyboard.isShiftPressed;
     final result = switch ((ch, event.logicalKey)) {
-      ('c', _) => handled(() => ref.read(composeProvider.notifier).newMessage()),
+      ('c', _) => handled(() => ref.read(composeProvider.notifier).newMessage(), ShortcutTarget.compose),
       ('/', _) => handled(() => ref.read(searchFocusProvider).requestFocus()),
-      ('j', _) || (_, LogicalKeyboardKey.arrowDown) when !shift => handled(() => stepThread(ref, 1)),
-      ('k', _) || (_, LogicalKeyboardKey.arrowUp) when !shift => handled(() => stepThread(ref, -1)),
-      ('e', _) => handled(() => applyThreadAction(ref, MailAction.archive, targets())),
-      ('#', _) => handled(() => applyThreadAction(ref, MailAction.trash, targets())),
-      ('!', _) => handled(() => applyThreadAction(ref, MailAction.markSpam, targets())),
+      ('j', _) || (_, LogicalKeyboardKey.arrowDown) when !shift => handled(() => stepThread(ref, 1), ShortcutTarget.older),
+      ('k', _) || (_, LogicalKeyboardKey.arrowUp) when !shift => handled(() => stepThread(ref, -1), ShortcutTarget.newer),
+      ('e', _) => handled(() => applyThreadAction(ref, MailAction.archive, targets()), ShortcutTarget.archive),
+      ('#', _) => handled(() => applyThreadAction(ref, MailAction.trash, targets()), ShortcutTarget.delete),
+      ('!', _) => handled(() => applyThreadAction(ref, MailAction.markSpam, targets()), ShortcutTarget.spam),
       ('s', _) => handled(() {
           final t = openSummary();
           applyThreadAction(ref, t?.isFlagged == true ? MailAction.unflag : MailAction.flag, targets());
         }),
-      ('U', _) => handled(() => applyThreadAction(ref, MailAction.markUnread, targets())),
+      ('U', _) => handled(() => applyThreadAction(ref, MailAction.markUnread, targets()), ShortcutTarget.unread),
       ('I', _) => handled(() => applyThreadAction(ref, MailAction.markRead, targets())),
       ('x', _) => handled(() {
           if (open != null) ref.read(selectionProvider.notifier).toggle('${open.accountId}/${open.threadId}');

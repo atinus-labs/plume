@@ -9,6 +9,7 @@ import 'package:plume_design/plume_design.dart';
 import '../../state/mail.dart';
 import '../../state/navigation.dart';
 import '../../state/settings.dart';
+import '../common/shortcut_echo.dart';
 import '../compose/compose_host.dart';
 import 'account_switcher.dart';
 
@@ -115,10 +116,14 @@ class _RailBody extends ConsumerWidget {
         const SizedBox(height: Space.sm),
         Padding(
           padding: const EdgeInsets.only(left: 16),
-          child: _ComposeFab(t: t, onPressed: () {
-            if (inDrawer) Navigator.of(context).maybePop();
-            ref.read(composeProvider.notifier).newMessage();
-          }),
+          child: ShortcutEcho(
+            target: ShortcutTarget.compose,
+            shape: RoundedRectangleBorder(borderRadius: Corners.all(Corners.large)),
+            child: _ComposeFab(t: t, onPressed: () {
+              if (inDrawer) Navigator.of(context).maybePop();
+              ref.read(composeProvider.notifier).newMessage();
+            }),
+          ),
         ),
         const SizedBox(height: Space.lg),
         Expanded(

@@ -32,7 +32,10 @@ class _AnimatedCountState extends State<AnimatedCount> {
     final text = Text(
       widget.format?.call(widget.value) ?? '${widget.value}',
       key: ValueKey(widget.value),
-      style: widget.style,
+      // Same-width digits, so the number keeps its width as it rolls.
+      style: (widget.style ?? const TextStyle()).copyWith(
+        fontFeatures: [...?widget.style?.fontFeatures, const FontFeature.tabularFigures()],
+      ),
       maxLines: 1,
       softWrap: false,
     );
@@ -87,4 +90,64 @@ class _PopState extends State<Pop> with SingleTickerProviderStateMixin {
         builder: (context, child) => Transform.scale(scale: _controller.value, child: child),
         child: widget.child,
       );
+}
+
+/// Plays a press on [child] each time [trigger] changes to a new non-null
+/// value: it squishes and springs back while a state layer flashes behind
+/// it. Shows that something other than a click, like a keyboard shortcut,
+/// used this control.
+class Press extends StatefulWidget {
+  const Press({super.key, required this.trigger, required this.child, this.shape = const CircleBorder()});
+
+  final Object? trigger;
+  final ShapeBorder shape;
+  final Widget child;
+
+  @override
+  State<Press> createState() => _PressState();
+}
+
+class _PressState extends State<Press> with TickerProviderStateMixin {
+  late final _scale = AnimationController.unbounded(vsync: this, value: 1);
+  late final _layer = AnimationController.unbounded(vsync: this, value: 0);
+
+  @override
+  void didUpdateWidget(Press oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.trigger == null || widget.trigger == oldWidget.trigger) return;
+    // Under reduced motion only the state layer shows.
+    if (!reduceMotion(context)) {
+      _scale.animateWith(Spring.spatialFast.simulate(_scale.value, 1, velocity: -6));
+    }
+    _layer.animateWith(Spring.effectsSlow.simulate(1, 0));
+  }
+
+  @override
+  void dispose() {
+    _scale.dispose();
+    _layer.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final color = Theme.of(context).colorScheme.onSurface;
+    return AnimatedBuilder(
+      animation: Listenable.merge([_scale, _layer]),
+      builder: (context, child) => Stack(
+        alignment: Alignment.center,
+        children: [
+          Positioned.fill(
+            child: IgnorePointer(
+              child: DecoratedBox(
+                decoration: ShapeDecoration(shape: widget.shape, color: color.withValues(alpha: 0.12 * unit(_layer.value))),
+              ),
+            ),
+          ),
+          Transform.scale(scale: _scale.value, child: child),
+        ],
+      ),
+      child: widget.child,
+    );
+  }
 }
