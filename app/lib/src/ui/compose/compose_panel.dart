@@ -1,3 +1,5 @@
+import 'package:flutter/gestures.dart';
+
 import 'dart:async';
 import 'dart:convert';
 
@@ -24,11 +26,18 @@ const _maxAttachmentBytes = 25 * 1024 * 1024;
 
 /// A compose window.
 class ComposePanel extends ConsumerStatefulWidget {
-  const ComposePanel({super.key, required this.request, required this.maximized, this.dockLeft = false});
+  const ComposePanel({
+    super.key,
+    required this.request,
+    required this.maximized,
+    this.dockLeft = false,
+    this.onDrag,
+  });
 
   final ComposeRequest request;
   final bool maximized;
   final bool dockLeft;
+  final void Function(Offset delta)? onDrag;
 
   @override
   ConsumerState<ComposePanel> createState() => _ComposePanelState();
@@ -39,7 +48,8 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
   late List<Address> _to = widget.request.to;
   late List<Address> _cc = widget.request.cc;
   late List<Address> _bcc = widget.request.bcc;
-  late bool _showCc = widget.request.cc.isNotEmpty || widget.request.bcc.isNotEmpty;
+  late bool _showCc =
+      widget.request.cc.isNotEmpty || widget.request.bcc.isNotEmpty;
   late final _subject = TextEditingController(text: widget.request.subject);
   late final _body = widget.request.html != null
       ? RichTextController.fromHtml(widget.request.html!)
@@ -59,6 +69,16 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
   Timer? _autosave;
   String _saveState = '';
   bool _sending = false;
+  Offset _dragOffset = Offset.zero;
+
+  void _handleDrag(Offset delta) {
+    if (widget.maximized) return;
+    if (widget.onDrag != null) {
+      widget.onDrag!(delta);
+    } else {
+      setState(() => _dragOffset += delta);
+    }
+  }
 
   @override
   void initState() {
@@ -66,10 +86,14 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     _subject.addListener(_scheduleSave);
     _body.addListener(_scheduleSave);
     unawaited(_loadQuote());
-    if (widget.request.forwardFrom != null) unawaited(_loadForwardedAttachments());
+    if (widget.request.forwardFrom != null)
+      unawaited(_loadForwardedAttachments());
     // Replies start in the body; new messages in the To field.
-    if (widget.request.mode != ComposeMode.fresh && widget.request.mode != ComposeMode.forward) {
-      WidgetsBinding.instance.addPostFrameCallback((_) => _bodyFocus.requestFocus());
+    if (widget.request.mode != ComposeMode.fresh &&
+        widget.request.mode != ComposeMode.forward) {
+      WidgetsBinding.instance.addPostFrameCallback(
+        (_) => _bodyFocus.requestFocus(),
+      );
     }
   }
 
@@ -87,7 +111,8 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     if (m == null) return;
     final body = await ref.read(storeProvider).body(m.accountId, m.id);
     var text = body?.text;
-    if ((text == null || text.trim().isEmpty) && body?.html != null) text = _htmlToText(body!.html!);
+    if ((text == null || text.trim().isEmpty) && body?.html != null)
+      text = _htmlToText(body!.html!);
     text ??= m.snippet;
     if (!mounted) return;
     setState(() {
@@ -104,7 +129,8 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
         ].join('\n');
         _showQuote = true;
       } else {
-        _quotedText = '${attributionLine(m)}\n${text!.trimRight().split('\n').map((l) => l.isEmpty ? '>' : '> $l').join('\n')}';
+        _quotedText =
+            '${attributionLine(m)}\n${text!.trimRight().split('\n').map((l) => l.isEmpty ? '>' : '> $l').join('\n')}';
       }
     });
   }
@@ -119,10 +145,16 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
       for (final info in infos) {
         final bytes = await engine.attachment(m.accountId, m.id, info);
         if (!mounted) return;
-        setState(() => _attachments = [
-              ..._attachments,
-              OutgoingAttachment(filename: info.filename, mimeType: info.mimeType, bytes: bytes),
-            ]);
+        setState(
+          () => _attachments = [
+            ..._attachments,
+            OutgoingAttachment(
+              filename: info.filename,
+              mimeType: info.mimeType,
+              bytes: bytes,
+            ),
+          ],
+        );
       }
     } catch (_) {
       showSnack('Some attachments couldn’t be included');
@@ -135,11 +167,19 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
 
   void _scheduleSave() {
     _autosave?.cancel();
-    _autosave = Timer(const Duration(seconds: 3), () => unawaited(_saveDraft()));
+    _autosave = Timer(
+      const Duration(seconds: 3),
+      () => unawaited(_saveDraft()),
+    );
   }
 
   bool get _isEmpty =>
-      _to.isEmpty && _cc.isEmpty && _bcc.isEmpty && _subject.text.trim().isEmpty && _body.text.trim().isEmpty && _attachments.isEmpty;
+      _to.isEmpty &&
+      _cc.isEmpty &&
+      _bcc.isEmpty &&
+      _subject.text.trim().isEmpty &&
+      _body.text.trim().isEmpty &&
+      _attachments.isEmpty;
 
   Future<void> _saveDraft() async {
     if (_isEmpty || _sending) return;
@@ -182,7 +222,12 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
       textBody: textParts.join('\n'),
       htmlBody: _plainText
           ? null
-          : _toHtml(_body.toHtml(), signature, quote, quoteIsForward: widget.request.mode == ComposeMode.forward),
+          : _toHtml(
+              _body.toHtml(),
+              signature,
+              quote,
+              quoteIsForward: widget.request.mode == ComposeMode.forward,
+            ),
       attachments: _attachments,
       threadId: widget.request.threadId,
       inReplyTo: widget.request.inReplyTo,
@@ -202,9 +247,15 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     }
     final message = _build();
     if (message == null) return;
-    if (message.subject.isEmpty && !await _confirm('Send without a subject?', 'Send')) return;
-    if (_mentionsAttachment(_body.text) && _attachments.isEmpty &&
-        !await _confirm('You mentioned an attachment, but nothing is attached. Send anyway?', 'Send')) {
+    if (message.subject.isEmpty &&
+        !await _confirm('Send without a subject?', 'Send'))
+      return;
+    if (_mentionsAttachment(_body.text) &&
+        _attachments.isEmpty &&
+        !await _confirm(
+          'You mentioned an attachment, but nothing is attached. Send anyway?',
+          'Send',
+        )) {
       return;
     }
     _sending = true;
@@ -256,8 +307,14 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
       builder: (context) => AlertDialog(
         content: Text(message),
         actions: [
-          TextButton(onPressed: () => Navigator.pop(context, false), child: const Text('Cancel')),
-          FilledButton(onPressed: () => Navigator.pop(context, true), child: Text(action)),
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancel'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(context, true),
+            child: Text(action),
+          ),
         ],
       ),
     );
@@ -276,7 +333,13 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
         continue;
       }
       total += bytes.length;
-      added.add(OutgoingAttachment(filename: f.name, mimeType: _mimeFor(f.name), bytes: bytes));
+      added.add(
+        OutgoingAttachment(
+          filename: f.name,
+          mimeType: _mimeFor(f.name),
+          bytes: bytes,
+        ),
+      );
     }
     setState(() => _attachments = [..._attachments, ...added]);
     _scheduleSave();
@@ -311,7 +374,10 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
   Future<void> _togglePlainText() async {
     if (!_plainText &&
         _body.hasFormatting &&
-        !await _confirm('Switching to plain text removes the formatting from this message.', 'Switch')) {
+        !await _confirm(
+          'Switching to plain text removes the formatting from this message.',
+          'Switch',
+        )) {
       return;
     }
     setState(() => _plainText = !_plainText);
@@ -321,20 +387,60 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
 
   Map<ShortcutActivator, VoidCallback> get _formatShortcuts {
     if (_plainText) return const {};
-    void Function() style(int flag) => () => _body.toggle(flag);
-    void Function() list(ListKind kind) => () => _body.toggleList(kind);
+    void Function() style(int flag) =>
+        () => _body.toggle(flag);
+    void Function() list(ListKind kind) =>
+        () => _body.toggleList(kind);
     return {
-      const SingleActivator(LogicalKeyboardKey.keyB, control: true): style(InlineStyle.bold),
-      const SingleActivator(LogicalKeyboardKey.keyI, control: true): style(InlineStyle.italic),
-      const SingleActivator(LogicalKeyboardKey.keyU, control: true): style(InlineStyle.underline),
-      const SingleActivator(LogicalKeyboardKey.keyX, control: true, shift: true): style(InlineStyle.strike),
-      const SingleActivator(LogicalKeyboardKey.keyK, control: true): () => unawaited(_editLink()),
+      const SingleActivator(LogicalKeyboardKey.keyB, control: true): style(
+        InlineStyle.bold,
+      ),
+      const SingleActivator(LogicalKeyboardKey.keyI, control: true): style(
+        InlineStyle.italic,
+      ),
+      const SingleActivator(LogicalKeyboardKey.keyU, control: true): style(
+        InlineStyle.underline,
+      ),
+      const SingleActivator(
+        LogicalKeyboardKey.keyX,
+        control: true,
+        shift: true,
+      ): style(
+        InlineStyle.strike,
+      ),
+      const SingleActivator(LogicalKeyboardKey.keyK, control: true): () =>
+          unawaited(_editLink()),
       // Shifted digits may arrive as the digit or as its symbol.
-      const SingleActivator(LogicalKeyboardKey.digit7, control: true, shift: true): list(ListKind.numbered),
-      const SingleActivator(LogicalKeyboardKey.ampersand, control: true, shift: true): list(ListKind.numbered),
-      const SingleActivator(LogicalKeyboardKey.digit8, control: true, shift: true): list(ListKind.bullet),
-      const SingleActivator(LogicalKeyboardKey.asterisk, control: true, shift: true): list(ListKind.bullet),
-      const SingleActivator(LogicalKeyboardKey.backslash, control: true): _body.clearFormatting,
+      const SingleActivator(
+        LogicalKeyboardKey.digit7,
+        control: true,
+        shift: true,
+      ): list(
+        ListKind.numbered,
+      ),
+      const SingleActivator(
+        LogicalKeyboardKey.ampersand,
+        control: true,
+        shift: true,
+      ): list(
+        ListKind.numbered,
+      ),
+      const SingleActivator(
+        LogicalKeyboardKey.digit8,
+        control: true,
+        shift: true,
+      ): list(
+        ListKind.bullet,
+      ),
+      const SingleActivator(
+        LogicalKeyboardKey.asterisk,
+        control: true,
+        shift: true,
+      ): list(
+        ListKind.bullet,
+      ),
+      const SingleActivator(LogicalKeyboardKey.backslash, control: true):
+          _body.clearFormatting,
     };
   }
 
@@ -345,8 +451,14 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final size = MediaQuery.sizeOf(context);
-    final width = widget.maximized ? (size.width - 64).clamp(400.0, 1040.0) : 560.0;
-    final height = _minimized ? 56.0 : (widget.maximized ? size.height - 64 : (size.height - 96).clamp(360.0, 640.0));
+    final width = widget.maximized
+        ? (size.width - 64).clamp(400.0, 1040.0)
+        : 560.0;
+    final height = _minimized
+        ? 56.0
+        : (widget.maximized
+              ? size.height - 64
+              : (size.height - 96).clamp(360.0, 640.0));
     final title = _subject.text.trim().isNotEmpty
         ? _subject.text.trim()
         : switch (widget.request.mode) {
@@ -358,8 +470,9 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     final alignment = widget.maximized
         ? Alignment.center
         : (widget.dockLeft ? Alignment.bottomLeft : Alignment.bottomRight);
+    final canDrag = !widget.maximized;
 
-    return TweenAnimationBuilder<double>(
+    final panel = TweenAnimationBuilder<double>(
       tween: Tween(begin: 0, end: 1),
       duration: Spring.spatial.duration,
       curve: Spring.spatial.curve,
@@ -373,45 +486,86 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
       child: CallbackShortcuts(
         bindings: {
           const SingleActivator(LogicalKeyboardKey.enter, control: true): _send,
-          const SingleActivator(LogicalKeyboardKey.escape): () => unawaited(_closeKeepingDraft()),
+          const SingleActivator(LogicalKeyboardKey.escape): () =>
+              unawaited(_closeKeepingDraft()),
         },
-        child: AnimatedContainer(
-          duration: Spring.spatial.duration,
-          curve: Spring.spatial.curve,
-          width: width,
-          height: height,
-          margin: EdgeInsets.only(bottom: widget.maximized ? 0 : 16),
-          child: Material(
-            color: scheme.surfaceContainerLow,
-            elevation: 8,
-            shadowColor: scheme.shadow.withValues(alpha: 0.45),
-            shape: RoundedRectangleBorder(borderRadius: Corners.all(Corners.extraLarge)),
-            clipBehavior: Clip.antiAlias,
-            child: Column(
-              children: [
-                _TitleBar(
-                  title: title,
-                  minimized: _minimized,
-                  maximized: widget.maximized,
-                  onMinimize: () => setState(() => _minimized = !_minimized),
-                  onMaximize: () => ref
-                      .read(maximizedComposeProvider.notifier)
-                      .set(widget.maximized ? null : widget.request.id),
-                  onClose: () => unawaited(_closeKeepingDraft()),
+        child: GestureDetector(
+          behavior: HitTestBehavior.translucent,
+          dragStartBehavior: DragStartBehavior.down,
+          onPanUpdate: canDrag ? (details) => _handleDrag(details.delta) : null,
+          child: Padding(
+            padding: EdgeInsets.only(bottom: widget.maximized ? 0 : 16),
+            child: AnimatedContainer(
+              duration: Spring.spatial.duration,
+              curve: Spring.spatial.curve,
+              width: width,
+              height: height,
+              child: Material(
+                color: scheme.surfaceContainerLow,
+                elevation: 8,
+                shadowColor: scheme.shadow.withValues(alpha: 0.45),
+                shape: RoundedRectangleBorder(
+                  borderRadius: Corners.all(Corners.extraLarge),
                 ),
-                if (!_minimized) Expanded(child: _form(theme)),
-              ],
+                clipBehavior: Clip.antiAlias,
+                child: Column(
+                  children: [
+                    if (_minimized)
+                      Expanded(
+                        child: _TitleBar(
+                          title: title,
+                          minimized: _minimized,
+                          maximized: widget.maximized,
+                          onMinimize: () =>
+                              setState(() => _minimized = !_minimized),
+                          onMaximize: () => ref
+                              .read(maximizedComposeProvider.notifier)
+                              .set(widget.maximized ? null : widget.request.id),
+                          onClose: () => unawaited(_closeKeepingDraft()),
+                          onDrag: canDrag ? _handleDrag : null,
+                        ),
+                      )
+                    else ...[
+                      _TitleBar(
+                        title: title,
+                        minimized: _minimized,
+                        maximized: widget.maximized,
+                        onMinimize: () =>
+                            setState(() => _minimized = !_minimized),
+                        onMaximize: () => ref
+                            .read(maximizedComposeProvider.notifier)
+                            .set(widget.maximized ? null : widget.request.id),
+                        onClose: () => unawaited(_closeKeepingDraft()),
+                        onDrag: canDrag ? _handleDrag : null,
+                      ),
+                      Expanded(child: _form(theme)),
+                    ],
+                  ],
+                ),
+              ),
             ),
           ),
         ),
       ),
     );
+
+    if (widget.onDrag != null ||
+        widget.maximized ||
+        _dragOffset == Offset.zero) {
+      return panel;
+    }
+    return Transform.translate(offset: _dragOffset, child: panel);
   }
 
   Widget _form(ThemeData theme) {
     final scheme = theme.colorScheme;
     final accounts = ref.watch(accountsProvider).value ?? const <Account>[];
-    final divider = Divider(height: 1, indent: 20, endIndent: 20, color: scheme.outlineVariant.withValues(alpha: 0.5));
+    final divider = Divider(
+      height: 1,
+      indent: 20,
+      endIndent: 20,
+      color: scheme.outlineVariant.withValues(alpha: 0.5),
+    );
 
     return Column(
       children: [
@@ -428,20 +582,35 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
           key: _toKey,
           label: 'To',
           recipients: _to,
-          autofocus: widget.request.mode == ComposeMode.fresh || widget.request.mode == ComposeMode.forward,
+          autofocus:
+              widget.request.mode == ComposeMode.fresh ||
+              widget.request.mode == ComposeMode.forward,
           onChanged: (v) {
             setState(() => _to = v);
             _scheduleSave();
           },
           trailing: _showCc
               ? null
-              : TextButton(onPressed: () => setState(() => _showCc = true), child: const Text('Cc  Bcc')),
+              : TextButton(
+                  onPressed: () => setState(() => _showCc = true),
+                  child: const Text('Cc  Bcc'),
+                ),
         ),
         divider,
         if (_showCc) ...[
-          RecipientField(key: _ccKey, label: 'Cc', recipients: _cc, onChanged: (v) => setState(() => _cc = v)),
+          RecipientField(
+            key: _ccKey,
+            label: 'Cc',
+            recipients: _cc,
+            onChanged: (v) => setState(() => _cc = v),
+          ),
           divider,
-          RecipientField(key: _bccKey, label: 'Bcc', recipients: _bcc, onChanged: (v) => setState(() => _bcc = v)),
+          RecipientField(
+            key: _bccKey,
+            label: 'Bcc',
+            recipients: _bcc,
+            onChanged: (v) => setState(() => _bcc = v),
+          ),
           divider,
         ],
         Padding(
@@ -490,11 +659,23 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
                   Align(
                     alignment: Alignment.centerLeft,
                     child: Tooltip(
-                      message: _showQuote ? 'Hide quoted text' : 'Show quoted text',
+                      message: _showQuote
+                          ? 'Hide quoted text'
+                          : 'Show quoted text',
                       child: ActionChip(
-                        avatar: Icon(_showQuote ? Symbols.unfold_less_rounded : Symbols.more_horiz_rounded, size: 18),
-                        label: Text(widget.request.mode == ComposeMode.forward ? 'Forwarded message' : 'Quoted text'),
-                        onPressed: () => setState(() => _showQuote = !_showQuote),
+                        avatar: Icon(
+                          _showQuote
+                              ? Symbols.unfold_less_rounded
+                              : Symbols.more_horiz_rounded,
+                          size: 18,
+                        ),
+                        label: Text(
+                          widget.request.mode == ComposeMode.forward
+                              ? 'Forwarded message'
+                              : 'Quoted text',
+                        ),
+                        onPressed: () =>
+                            setState(() => _showQuote = !_showQuote),
                       ),
                     ),
                   ),
@@ -503,8 +684,20 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
                       padding: const EdgeInsets.only(top: 8),
                       child: Container(
                         padding: const EdgeInsets.only(left: 12),
-                        decoration: BoxDecoration(border: Border(left: BorderSide(color: scheme.outlineVariant, width: 3))),
-                        child: Text(_quotedText!, style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant)),
+                        decoration: BoxDecoration(
+                          border: Border(
+                            left: BorderSide(
+                              color: scheme.outlineVariant,
+                              width: 3,
+                            ),
+                          ),
+                        ),
+                        child: Text(
+                          _quotedText!,
+                          style: theme.textTheme.bodyMedium?.copyWith(
+                            color: scheme.onSurfaceVariant,
+                          ),
+                        ),
                       ),
                     ),
                 ],
@@ -524,42 +717,74 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
                     padding: const EdgeInsets.only(right: 6),
                     child: InputChip(
                       avatar: const Icon(Symbols.attach_file_rounded, size: 18),
-                      label: Text('${a.filename}  ·  ${fileSize(a.bytes.length)}'),
-                      onDeleted: () => setState(() => _attachments = [..._attachments]..remove(a)),
+                      label: Text(
+                        '${a.filename}  ·  ${fileSize(a.bytes.length)}',
+                      ),
+                      onDeleted: () => setState(
+                        () => _attachments = [..._attachments]..remove(a),
+                      ),
                     ),
                   ),
-                if (_loadingForwarded) const Center(child: LoadingIndicator(size: 32)),
+                if (_loadingForwarded)
+                  const Center(child: LoadingIndicator(size: 32)),
               ],
             ),
           ),
         if (_showFormatting && !_plainText)
-          _FormatBar(controller: _body, onFormat: _format, onLink: () => unawaited(_editLink())),
+          _FormatBar(
+            controller: _body,
+            onFormat: _format,
+            onLink: () => unawaited(_editLink()),
+          ),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 4, 12, 14),
           child: Row(
             children: [
               FilledButton.icon(
                 onPressed: _send,
-                style: const ButtonStyle(minimumSize: WidgetStatePropertyAll(Size(112, 48))),
+                style: const ButtonStyle(
+                  minimumSize: WidgetStatePropertyAll(Size(112, 48)),
+                ),
                 icon: const Icon(Symbols.send_rounded, size: 20),
                 label: const Text('Send'),
               ),
               const SizedBox(width: 6),
               IconButton(
-                tooltip: _plainText ? 'Formatting is off in plain text mode' : 'Formatting options',
+                tooltip: _plainText
+                    ? 'Formatting is off in plain text mode'
+                    : 'Formatting options',
                 isSelected: _showFormatting && !_plainText,
-                onPressed: _plainText ? null : () => setState(() => _showFormatting = !_showFormatting),
+                onPressed: _plainText
+                    ? null
+                    : () => setState(() => _showFormatting = !_showFormatting),
                 icon: const Icon(Symbols.text_format_rounded),
               ),
-              IconButton(tooltip: 'Attach files', onPressed: _attach, icon: const Icon(Symbols.attach_file_rounded)),
+              IconButton(
+                tooltip: 'Attach files',
+                onPressed: _attach,
+                icon: const Icon(Symbols.attach_file_rounded),
+              ),
               const SizedBox(width: 8),
               Expanded(
-                child: Text(_saveState,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant)),
+                child: Text(
+                  _saveState,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.bodySmall?.copyWith(
+                    color: scheme.onSurfaceVariant,
+                  ),
+                ),
               ),
-              Text('Ctrl+Enter to send', style: theme.textTheme.labelSmall?.copyWith(color: scheme.outline)),
+              Flexible(
+                child: Text(
+                  'Ctrl+Enter to send',
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: theme.textTheme.labelSmall?.copyWith(
+                    color: scheme.outline,
+                  ),
+                ),
+              ),
               MenuAnchor(
                 menuChildren: [
                   CheckboxMenuButton(
@@ -570,11 +795,17 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
                 ],
                 builder: (context, controller, _) => IconButton(
                   tooltip: 'More options',
-                  onPressed: () => controller.isOpen ? controller.close() : controller.open(),
+                  onPressed: () => controller.isOpen
+                      ? controller.close()
+                      : controller.open(),
                   icon: const Icon(Symbols.more_vert_rounded),
                 ),
               ),
-              IconButton(tooltip: 'Discard draft', onPressed: _discard, icon: const Icon(Symbols.delete_rounded)),
+              IconButton(
+                tooltip: 'Discard draft',
+                onPressed: _discard,
+                icon: const Icon(Symbols.delete_rounded),
+              ),
             ],
           ),
         ),
@@ -591,6 +822,7 @@ class _TitleBar extends StatelessWidget {
     required this.onMinimize,
     required this.onMaximize,
     required this.onClose,
+    this.onDrag,
   });
 
   final String title;
@@ -599,37 +831,68 @@ class _TitleBar extends StatelessWidget {
   final VoidCallback onMinimize;
   final VoidCallback onMaximize;
   final VoidCallback onClose;
+  final void Function(Offset delta)? onDrag;
 
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
+    final canDrag = !maximized && onDrag != null;
     return Material(
       color: scheme.surfaceContainerHigh,
-      child: InkWell(
-        onTap: minimized ? onMinimize : null,
-        child: SizedBox(
-          height: 56,
-          child: Row(
-            children: [
-              const SizedBox(width: 20),
-              Expanded(
-                child: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleSmallEmphasized),
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        dragStartBehavior: DragStartBehavior.down,
+        onPanUpdate: canDrag ? (details) => onDrag!(details.delta) : null,
+        child: InkWell(
+          onTap: minimized ? onMinimize : null,
+          child: MouseRegion(
+            cursor: canDrag
+                ? SystemMouseCursors.move
+                : SystemMouseCursors.basic,
+            child: SizedBox(
+              height: 56,
+              child: Row(
+                children: [
+                  const SizedBox(width: 20),
+                  Expanded(
+                    child: Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: theme.textTheme.titleSmallEmphasized,
+                    ),
+                  ),
+                  IconButton(
+                    tooltip: minimized ? 'Restore' : 'Minimise',
+                    onPressed: onMinimize,
+                    icon: Icon(
+                      minimized
+                          ? Symbols.expand_less_rounded
+                          : Symbols.minimize_rounded,
+                      size: 20,
+                    ),
+                  ),
+                  if (!minimized)
+                    IconButton(
+                      tooltip: maximized ? 'Exit full size' : 'Full size',
+                      onPressed: onMaximize,
+                      icon: Icon(
+                        maximized
+                            ? Symbols.close_fullscreen_rounded
+                            : Symbols.open_in_full_rounded,
+                        size: 18,
+                      ),
+                    ),
+                  IconButton(
+                    tooltip: 'Save & close (Esc)',
+                    onPressed: onClose,
+                    icon: const Icon(Symbols.close_rounded, size: 20),
+                  ),
+                  const SizedBox(width: 6),
+                ],
               ),
-              IconButton(
-                tooltip: minimized ? 'Restore' : 'Minimise',
-                onPressed: onMinimize,
-                icon: Icon(minimized ? Symbols.expand_less_rounded : Symbols.minimize_rounded, size: 20),
-              ),
-              if (!minimized)
-                IconButton(
-                  tooltip: maximized ? 'Exit full size' : 'Full size',
-                  onPressed: onMaximize,
-                  icon: Icon(maximized ? Symbols.close_fullscreen_rounded : Symbols.open_in_full_rounded, size: 18),
-                ),
-              IconButton(tooltip: 'Save & close (Esc)', onPressed: onClose, icon: const Icon(Symbols.close_rounded, size: 20)),
-              const SizedBox(width: 6),
-            ],
+            ),
           ),
         ),
       ),
@@ -639,7 +902,11 @@ class _TitleBar extends StatelessWidget {
 
 /// Formatting buttons above the compose actions, like Gmail's formatting bar.
 class _FormatBar extends StatelessWidget {
-  const _FormatBar({required this.controller, required this.onFormat, required this.onLink});
+  const _FormatBar({
+    required this.controller,
+    required this.onFormat,
+    required this.onLink,
+  });
 
   final RichTextController controller;
   final void Function(void Function() action) onFormat;
@@ -650,21 +917,37 @@ class _FormatBar extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final selectedStyle = ButtonStyle(
       backgroundColor: WidgetStateProperty.resolveWith(
-          (states) => states.contains(WidgetState.selected) ? scheme.secondaryContainer : null),
+        (states) => states.contains(WidgetState.selected)
+            ? scheme.secondaryContainer
+            : null,
+      ),
       foregroundColor: WidgetStateProperty.resolveWith(
-          (states) => states.contains(WidgetState.selected) ? scheme.onSecondaryContainer : scheme.onSurfaceVariant),
+        (states) => states.contains(WidgetState.selected)
+            ? scheme.onSecondaryContainer
+            : scheme.onSurfaceVariant,
+      ),
     );
-    Widget button(IconData icon, String tooltip, bool selected, VoidCallback onPressed) => IconButton(
-          tooltip: tooltip,
-          isSelected: selected,
-          style: selectedStyle,
-          visualDensity: VisualDensity.compact,
-          iconSize: 20,
-          onPressed: onPressed,
-          icon: Icon(icon),
-        );
+    Widget button(
+      IconData icon,
+      String tooltip,
+      bool selected,
+      VoidCallback onPressed,
+    ) => IconButton(
+      tooltip: tooltip,
+      isSelected: selected,
+      style: selectedStyle,
+      visualDensity: VisualDensity.compact,
+      iconSize: 20,
+      onPressed: onPressed,
+      icon: Icon(icon),
+    );
     Widget gap() => SizedBox(
-        height: 20, child: VerticalDivider(width: 12, color: scheme.outlineVariant.withValues(alpha: 0.6)));
+      height: 20,
+      child: VerticalDivider(
+        width: 12,
+        color: scheme.outlineVariant.withValues(alpha: 0.6),
+      ),
+    );
 
     // Clicking a button must not take the selection away from the body.
     return TextFieldTapRegion(
@@ -681,24 +964,65 @@ class _FormatBar extends StatelessWidget {
               listenable: controller,
               builder: (context, _) {
                 final list = controller.listKind();
-                Widget style(IconData icon, String tooltip, int flag) =>
-                    button(icon, tooltip, controller.isActive(flag), () => onFormat(() => controller.toggle(flag)));
+                Widget style(IconData icon, String tooltip, int flag) => button(
+                  icon,
+                  tooltip,
+                  controller.isActive(flag),
+                  () => onFormat(() => controller.toggle(flag)),
+                );
                 return Row(
                   children: [
-                    style(Symbols.format_bold_rounded, 'Bold (Ctrl+B)', InlineStyle.bold),
-                    style(Symbols.format_italic_rounded, 'Italic (Ctrl+I)', InlineStyle.italic),
-                    style(Symbols.format_underlined_rounded, 'Underline (Ctrl+U)', InlineStyle.underline),
-                    style(Symbols.strikethrough_s_rounded, 'Strikethrough (Ctrl+Shift+X)', InlineStyle.strike),
+                    style(
+                      Symbols.format_bold_rounded,
+                      'Bold (Ctrl+B)',
+                      InlineStyle.bold,
+                    ),
+                    style(
+                      Symbols.format_italic_rounded,
+                      'Italic (Ctrl+I)',
+                      InlineStyle.italic,
+                    ),
+                    style(
+                      Symbols.format_underlined_rounded,
+                      'Underline (Ctrl+U)',
+                      InlineStyle.underline,
+                    ),
+                    style(
+                      Symbols.strikethrough_s_rounded,
+                      'Strikethrough (Ctrl+Shift+X)',
+                      InlineStyle.strike,
+                    ),
                     gap(),
-                    button(Symbols.link_rounded, 'Insert link (Ctrl+K)', controller.linkRange() != null, onLink),
+                    button(
+                      Symbols.link_rounded,
+                      'Insert link (Ctrl+K)',
+                      controller.linkRange() != null,
+                      onLink,
+                    ),
                     gap(),
-                    button(Symbols.format_list_numbered_rounded, 'Numbered list (Ctrl+Shift+7)', list == ListKind.numbered,
-                        () => onFormat(() => controller.toggleList(ListKind.numbered))),
-                    button(Symbols.format_list_bulleted_rounded, 'Bulleted list (Ctrl+Shift+8)', list == ListKind.bullet,
-                        () => onFormat(() => controller.toggleList(ListKind.bullet))),
+                    button(
+                      Symbols.format_list_numbered_rounded,
+                      'Numbered list (Ctrl+Shift+7)',
+                      list == ListKind.numbered,
+                      () => onFormat(
+                        () => controller.toggleList(ListKind.numbered),
+                      ),
+                    ),
+                    button(
+                      Symbols.format_list_bulleted_rounded,
+                      'Bulleted list (Ctrl+Shift+8)',
+                      list == ListKind.bullet,
+                      () => onFormat(
+                        () => controller.toggleList(ListKind.bullet),
+                      ),
+                    ),
                     gap(),
-                    button(Symbols.format_clear_rounded, 'Remove formatting (Ctrl+\\)', false,
-                        () => onFormat(controller.clearFormatting)),
+                    button(
+                      Symbols.format_clear_rounded,
+                      'Remove formatting (Ctrl+\\)',
+                      false,
+                      () => onFormat(controller.clearFormatting),
+                    ),
                   ],
                 );
               },
@@ -712,7 +1036,11 @@ class _FormatBar extends StatelessWidget {
 
 /// Edits the text and address of a link.
 class _LinkDialog extends StatefulWidget {
-  const _LinkDialog({required this.label, required this.url, required this.canRemove});
+  const _LinkDialog({
+    required this.label,
+    required this.url,
+    required this.canRemove,
+  });
 
   final String label;
   final String url;
@@ -738,7 +1066,10 @@ class _LinkDialogState extends State<_LinkDialog> {
   void _apply() {
     final link = _link;
     if (link == null) return;
-    Navigator.pop(context, (_label.text.isEmpty ? _url.text.trim() : _label.text, link));
+    Navigator.pop(context, (
+      _label.text.isEmpty ? _url.text.trim() : _label.text,
+      link,
+    ));
   }
 
   @override
@@ -765,7 +1096,9 @@ class _LinkDialogState extends State<_LinkDialog> {
               decoration: InputDecoration(
                 labelText: 'Web address or email',
                 hintText: 'https://example.com',
-                errorText: invalid ? 'Enter a web address or an email address' : null,
+                errorText: invalid
+                    ? 'Enter a web address or an email address'
+                    : null,
               ),
             ),
           ],
@@ -773,16 +1106,30 @@ class _LinkDialogState extends State<_LinkDialog> {
       ),
       actions: [
         if (widget.canRemove)
-          TextButton(onPressed: () => Navigator.pop(context, (widget.label, null)), child: const Text('Remove link')),
-        TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-        FilledButton(onPressed: _link == null ? null : _apply, child: const Text('Apply')),
+          TextButton(
+            onPressed: () => Navigator.pop(context, (widget.label, null)),
+            child: const Text('Remove link'),
+          ),
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: _link == null ? null : _apply,
+          child: const Text('Apply'),
+        ),
       ],
     );
   }
 }
 
 class _FromRow extends StatelessWidget {
-  const _FromRow({required this.accounts, required this.selected, required this.locked, required this.onChanged});
+  const _FromRow({
+    required this.accounts,
+    required this.selected,
+    required this.locked,
+    required this.onChanged,
+  });
 
   final List<Account> accounts;
   final String? selected;
@@ -792,26 +1139,46 @@ class _FromRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
-    final current = accounts.where((a) => a.id == selected).firstOrNull ?? accounts.first;
+    final current =
+        accounts.where((a) => a.id == selected).firstOrNull ?? accounts.first;
     return Padding(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 4),
       child: Row(
         children: [
-          SizedBox(width: 40, child: Text('From', style: theme.textTheme.bodyMedium?.copyWith(color: theme.colorScheme.onSurfaceVariant))),
+          SizedBox(
+            width: 40,
+            child: Text(
+              'From',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+            ),
+          ),
           MenuAnchor(
             menuChildren: [
               for (final a in accounts)
                 MenuItemButton(
-                  leadingIcon: MorphAvatar(name: a.displayName, colorKey: a.email, size: 28),
+                  leadingIcon: MorphAvatar(
+                    name: a.displayName,
+                    colorKey: a.email,
+                    size: 28,
+                  ),
                   onPressed: () => onChanged(a.id),
                   child: Text('${a.displayName}  <${a.email}>'),
                 ),
             ],
             builder: (context, controller, _) => TextButton.icon(
-              onPressed: locked ? null : () => controller.isOpen ? controller.close() : controller.open(),
+              onPressed: locked
+                  ? null
+                  : () => controller.isOpen
+                        ? controller.close()
+                        : controller.open(),
               iconAlignment: IconAlignment.end,
               icon: locked ? null : const Icon(Symbols.arrow_drop_down_rounded),
-              label: Text('${current.displayName} <${current.email}>', style: theme.textTheme.bodyLarge),
+              label: Text(
+                '${current.displayName} <${current.email}>',
+                style: theme.textTheme.bodyLarge,
+              ),
             ),
           ),
         ],
@@ -820,43 +1187,56 @@ class _FromRow extends StatelessWidget {
   }
 }
 
-bool _mentionsAttachment(String body) =>
-    RegExp(r'\b(attached|attachment|attaching|enclosed)\b', caseSensitive: false).hasMatch(body);
+bool _mentionsAttachment(String body) => RegExp(
+  r'\b(attached|attachment|attaching|enclosed)\b',
+  caseSensitive: false,
+).hasMatch(body);
 
 String _mimeFor(String name) => switch (p.extension(name).toLowerCase()) {
-      '.pdf' => 'application/pdf',
-      '.png' => 'image/png',
-      '.jpg' || '.jpeg' => 'image/jpeg',
-      '.gif' => 'image/gif',
-      '.webp' => 'image/webp',
-      '.svg' => 'image/svg+xml',
-      '.txt' || '.md' => 'text/plain',
-      '.csv' => 'text/csv',
-      '.html' || '.htm' => 'text/html',
-      '.zip' => 'application/zip',
-      '.json' => 'application/json',
-      '.doc' => 'application/msword',
-      '.docx' => 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
-      '.xls' => 'application/vnd.ms-excel',
-      '.xlsx' => 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-      '.ppt' => 'application/vnd.ms-powerpoint',
-      '.pptx' => 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
-      '.odt' => 'application/vnd.oasis.opendocument.text',
-      '.ods' => 'application/vnd.oasis.opendocument.spreadsheet',
-      '.mp3' => 'audio/mpeg',
-      '.mp4' => 'video/mp4',
-      _ => 'application/octet-stream',
-    };
+  '.pdf' => 'application/pdf',
+  '.png' => 'image/png',
+  '.jpg' || '.jpeg' => 'image/jpeg',
+  '.gif' => 'image/gif',
+  '.webp' => 'image/webp',
+  '.svg' => 'image/svg+xml',
+  '.txt' || '.md' => 'text/plain',
+  '.csv' => 'text/csv',
+  '.html' || '.htm' => 'text/html',
+  '.zip' => 'application/zip',
+  '.json' => 'application/json',
+  '.doc' => 'application/msword',
+  '.docx' =>
+    'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.xls' => 'application/vnd.ms-excel',
+  '.xlsx' =>
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  '.ppt' => 'application/vnd.ms-powerpoint',
+  '.pptx' =>
+    'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.odt' => 'application/vnd.oasis.opendocument.text',
+  '.ods' => 'application/vnd.oasis.opendocument.spreadsheet',
+  '.mp3' => 'audio/mpeg',
+  '.mp4' => 'video/mp4',
+  _ => 'application/octet-stream',
+};
 
 /// Builds the HTML part around the formatted [body]: the signature and
 /// quote are escaped with paragraphs kept, links clickable, and the quote in
 /// a blockquote.
-String _toHtml(String body, String? signature, String? quote, {required bool quoteIsForward}) {
+String _toHtml(
+  String body,
+  String? signature,
+  String? quote, {
+  required bool quoteIsForward,
+}) {
   String esc(String s) => const HtmlEscape(HtmlEscapeMode.element).convert(s);
   String para(String s) => linkifyHtml(esc(s)).replaceAll('\n', '<br>');
-  final buffer = StringBuffer('<div dir="auto" style="font-family:sans-serif">')..write(body);
+  final buffer = StringBuffer('<div dir="auto" style="font-family:sans-serif">')
+    ..write(body);
   if (signature != null && signature.isNotEmpty) {
-    buffer.write('<br><div class="plume_signature">-- <br>${para(signature)}</div>');
+    buffer.write(
+      '<br><div class="plume_signature">-- <br>${para(signature)}</div>',
+    );
   }
   buffer.write('</div>');
   if (quote != null) {
@@ -865,10 +1245,15 @@ String _toHtml(String body, String? signature, String? quote, {required bool quo
     } else {
       final lines = quote.split('\n');
       final attribution = lines.first;
-      final quoted = lines.skip(1).map((l) => l.startsWith('> ') ? l.substring(2) : (l == '>' ? '' : l)).join('\n');
-      buffer.write('<br><div class="gmail_quote"><div>${esc(attribution)}</div>'
-          '<blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">'
-          '${para(quoted)}</blockquote></div>');
+      final quoted = lines
+          .skip(1)
+          .map((l) => l.startsWith('> ') ? l.substring(2) : (l == '>' ? '' : l))
+          .join('\n');
+      buffer.write(
+        '<br><div class="gmail_quote"><div>${esc(attribution)}</div>'
+        '<blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">'
+        '${para(quoted)}</blockquote></div>',
+      );
     }
   }
   return buffer.toString();
@@ -877,7 +1262,10 @@ String _toHtml(String body, String? signature, String? quote, {required bool quo
 /// Rough HTML to text for quoting.
 String _htmlToText(String html) {
   var s = html
-      .replaceAll(RegExp(r'<(script|style)[^>]*>[\s\S]*?</\1>', caseSensitive: false), '')
+      .replaceAll(
+        RegExp(r'<(script|style)[^>]*>[\s\S]*?</\1>', caseSensitive: false),
+        '',
+      )
       .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
       .replaceAll(RegExp(r'</(p|div|tr|li|h\d)>', caseSensitive: false), '\n')
       .replaceAll(RegExp(r'<[^>]+>'), '');

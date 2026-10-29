@@ -63,7 +63,9 @@ final class ComposeRequest {
 }
 
 /// Open compose windows.
-final composeProvider = NotifierProvider<ComposeNotifier, List<ComposeRequest>>(ComposeNotifier.new);
+final composeProvider = NotifierProvider<ComposeNotifier, List<ComposeRequest>>(
+  ComposeNotifier.new,
+);
 
 class ComposeNotifier extends Notifier<List<ComposeRequest>> {
   int _next = 1;
@@ -80,26 +82,37 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
 
   void newMessage({List<Address> to = const []}) {
     // Only one blank message at a time; focus it instead of stacking.
-    final blank = state.where((r) => r.mode == ComposeMode.fresh && r.to.isEmpty && to.isEmpty).firstOrNull;
+    final blank = state
+        .where((r) => r.mode == ComposeMode.fresh && r.to.isEmpty && to.isEmpty)
+        .firstOrNull;
     if (blank != null) return;
-    _open(ComposeRequest(id: _next++, mode: ComposeMode.fresh, accountId: _defaultAccount(), to: to));
+    _open(
+      ComposeRequest(
+        id: _next++,
+        mode: ComposeMode.fresh,
+        accountId: _defaultAccount(),
+        to: to,
+      ),
+    );
   }
 
   /// Opens a message prefilled from a `mailto:` link.
   void mailto(MailtoLink link) {
     if (link.isEmpty) return newMessage();
-    _open(ComposeRequest(
-      id: _next++,
-      mode: ComposeMode.fresh,
-      accountId: _defaultAccount(),
-      to: link.to,
-      cc: link.cc,
-      bcc: link.bcc,
-      subject: link.subject,
-      body: link.body,
-      inReplyTo: link.inReplyTo,
-      references: [?link.inReplyTo],
-    ));
+    _open(
+      ComposeRequest(
+        id: _next++,
+        mode: ComposeMode.fresh,
+        accountId: _defaultAccount(),
+        to: link.to,
+        cc: link.cc,
+        bcc: link.bcc,
+        subject: link.subject,
+        body: link.body,
+        inReplyTo: link.inReplyTo,
+        references: [?link.inReplyTo],
+      ),
+    );
   }
 
   void reply(Message m, {required bool all}) {
@@ -110,55 +123,71 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
 
     final to = fromMe ? m.to : (m.replyTo.isNotEmpty ? m.replyTo : [?m.from]);
     final cc = all
-        ? [...m.to, ...m.cc].where(notMe).where((a) => !to.any((t) => t.email.toLowerCase() == a.email.toLowerCase())).toList()
+        ? [...m.to, ...m.cc]
+              .where(notMe)
+              .where(
+                (a) => !to.any(
+                  (t) => t.email.toLowerCase() == a.email.toLowerCase(),
+                ),
+              )
+              .toList()
         : const <Address>[];
-    _open(ComposeRequest(
-      id: _next++,
-      mode: all ? ComposeMode.replyAll : ComposeMode.reply,
-      accountId: m.accountId,
-      to: _dedupe(to),
-      cc: _dedupe(cc),
-      subject: _prefixed('Re:', m.subject),
-      quoted: m,
-      threadId: m.threadId,
-      inReplyTo: m.messageIdHeader,
-      references: [...m.references, ?m.messageIdHeader],
-    ));
+    _open(
+      ComposeRequest(
+        id: _next++,
+        mode: all ? ComposeMode.replyAll : ComposeMode.reply,
+        accountId: m.accountId,
+        to: _dedupe(to),
+        cc: _dedupe(cc),
+        subject: _prefixed('Re:', m.subject),
+        quoted: m,
+        threadId: m.threadId,
+        inReplyTo: m.messageIdHeader,
+        references: [...m.references, ?m.messageIdHeader],
+      ),
+    );
   }
 
   void forward(Message m) {
-    _open(ComposeRequest(
-      id: _next++,
-      mode: ComposeMode.forward,
-      accountId: m.accountId,
-      subject: _prefixed('Fwd:', m.subject),
-      quoted: m,
-      forwardFrom: m,
-    ));
+    _open(
+      ComposeRequest(
+        id: _next++,
+        mode: ComposeMode.forward,
+        accountId: m.accountId,
+        subject: _prefixed('Fwd:', m.subject),
+        quoted: m,
+        forwardFrom: m,
+      ),
+    );
   }
 
   /// Re-opens a message taken back by undo-send or a failed send.
   void reopen(OutgoingMessage message) {
-    _open(ComposeRequest(
-      id: _next++,
-      mode: message.threadId == null ? ComposeMode.fresh : ComposeMode.reply,
-      accountId: message.accountId,
-      to: message.to,
-      cc: message.cc,
-      bcc: message.bcc,
-      subject: message.subject,
-      body: message.textBody,
-      html: message.htmlBody,
-      plainText: message.htmlBody == null,
-      threadId: message.threadId,
-      inReplyTo: message.inReplyTo,
-      references: message.references,
-      draftId: message.draftId,
-      attachments: message.attachments,
-    ));
+    _open(
+      ComposeRequest(
+        id: _next++,
+        mode: message.threadId == null ? ComposeMode.fresh : ComposeMode.reply,
+        accountId: message.accountId,
+        to: message.to,
+        cc: message.cc,
+        bcc: message.bcc,
+        subject: message.subject,
+        body: message.textBody,
+        html: message.htmlBody,
+        plainText: message.htmlBody == null,
+        threadId: message.threadId,
+        inReplyTo: message.inReplyTo,
+        references: message.references,
+        draftId: message.draftId,
+        attachments: message.attachments,
+      ),
+    );
   }
 
-  void close(int id) => state = [for (final r in state) if (r.id != id) r];
+  void close(int id) => state = [
+    for (final r in state)
+      if (r.id != id) r,
+  ];
 
   void _open(ComposeRequest request) {
     // At most three docked windows, like other desktop clients.
@@ -168,13 +197,18 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
 
   static List<Address> _dedupe(List<Address> list) {
     final seen = <String>{};
-    return [for (final a in list) if (seen.add(a.email.toLowerCase())) a];
+    return [
+      for (final a in list)
+        if (seen.add(a.email.toLowerCase())) a,
+    ];
   }
 
   static String _prefixed(String prefix, String subject) {
     final s = subject.trim();
     final lower = s.toLowerCase();
-    if (lower.startsWith(prefix.toLowerCase()) || (prefix == 'Fwd:' && lower.startsWith('fw:'))) return s;
+    if (lower.startsWith(prefix.toLowerCase()) ||
+        (prefix == 'Fwd:' && lower.startsWith('fw:')))
+      return s;
     return '$prefix $s';
   }
 }
@@ -186,7 +220,9 @@ String attributionLine(Message m) {
 }
 
 /// The compose window shown maximised, if any.
-final maximizedComposeProvider = NotifierProvider<_MaximizedNotifier, int?>(_MaximizedNotifier.new);
+final maximizedComposeProvider = NotifierProvider<_MaximizedNotifier, int?>(
+  _MaximizedNotifier.new,
+);
 
 class _MaximizedNotifier extends Notifier<int?> {
   @override
@@ -204,18 +240,26 @@ class _MaximizedNotifier extends Notifier<int?> {
 /// Floating compose windows docked to the bottom-right corner. A maximised
 /// window moves to the centre over a scrim; its state survives the move
 /// because each panel has a global key.
-class ComposeHost extends ConsumerWidget {
+class ComposeHost extends ConsumerStatefulWidget {
   const ComposeHost({super.key});
 
+  @override
+  ConsumerState<ComposeHost> createState() => _ComposeHostState();
+}
+
+class _ComposeHostState extends ConsumerState<ComposeHost> {
   static final _keys = <int, GlobalKey>{};
+  final _dragOffsets = <int, Offset>{};
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  Widget build(BuildContext context) {
     final requests = ref.watch(composeProvider);
     final maximized = ref.watch(maximizedComposeProvider);
     _keys.removeWhere((id, _) => !requests.any((r) => r.id == id));
+    _dragOffsets.removeWhere((id, _) => !requests.any((r) => r.id == id));
     if (requests.isEmpty) return const SizedBox.shrink();
-    GlobalKey keyFor(int id) => _keys.putIfAbsent(id, () => GlobalKey(debugLabel: 'compose-$id'));
+    GlobalKey keyFor(int id) =>
+        _keys.putIfAbsent(id, () => GlobalKey(debugLabel: 'compose-$id'));
     final docked = requests.where((r) => r.id != maximized).toList();
     final big = requests.where((r) => r.id == maximized).firstOrNull;
     final scheme = Theme.of(context).colorScheme;
@@ -236,50 +280,62 @@ class ComposeHost extends ConsumerWidget {
           final leftOffset = railWidth + 16.0;
 
           return Stack(
+            clipBehavior: Clip.none,
             children: [
-              Positioned(
-                left: dockLeft ? leftOffset : null,
-                right: dockLeft ? null : 16,
-                bottom: 0,
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.end,
-                  children: [
-                    if (!dockLeft)
-                      for (final r in docked)
-                        Padding(
-                          padding: const EdgeInsets.only(left: 12),
-                          child: ComposePanel(key: keyFor(r.id), request: r, maximized: false, dockLeft: false),
-                        )
-                    else
-                      for (final r in docked.reversed)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 12),
-                          child: ComposePanel(key: keyFor(r.id), request: r, maximized: false, dockLeft: true),
-                        ),
-                  ],
+              for (var i = 0; i < docked.length; i++) ...[
+                () {
+                  final r = docked[i];
+                  final drag = _dragOffsets[r.id] ?? Offset.zero;
+                  final baseRight =
+                      16.0 + (docked.length - 1 - i) * (560.0 + 12.0);
+                  final baseLeft =
+                      leftOffset + (docked.length - 1 - i) * (560.0 + 12.0);
+                  return Positioned(
+                    left: dockLeft ? baseLeft + drag.dx : null,
+                    right: dockLeft ? null : baseRight - drag.dx,
+                    bottom: -drag.dy,
+                    child: ComposePanel(
+                      key: keyFor(r.id),
+                      request: r,
+                      maximized: false,
+                      dockLeft: dockLeft,
+                      onDrag: (delta) {
+                        setState(() {
+                          _dragOffsets[r.id] =
+                              (_dragOffsets[r.id] ?? Offset.zero) + delta;
+                        });
+                      },
+                    ),
+                  );
+                }(),
+              ],
+              if (big != null) ...[
+                Positioned.fill(
+                  child: GestureDetector(
+                    onTap: () =>
+                        ref.read(maximizedComposeProvider.notifier).set(null),
+                    child: ColoredBox(
+                      color: scheme.scrim.withValues(alpha: 0.32),
+                    ),
+                  ),
                 ),
-              ),
-          if (big != null) ...[
-            Positioned.fill(
-              child: GestureDetector(
-                onTap: () => ref.read(maximizedComposeProvider.notifier).set(null),
-                child: ColoredBox(color: scheme.scrim.withValues(alpha: 0.32)),
-              ),
-            ),
-            Positioned.fill(
-              child: Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(32),
-                  child: ComposePanel(key: keyFor(big.id), request: big, maximized: true),
+                Positioned.fill(
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: ComposePanel(
+                        key: keyFor(big.id),
+                        request: big,
+                        maximized: true,
+                      ),
+                    ),
+                  ),
                 ),
-              ),
-            ),
-          ],
-        ],
-      );
-    },
-  ),
-);
+              ],
+            ],
+          );
+        },
+      ),
+    );
   }
 }
