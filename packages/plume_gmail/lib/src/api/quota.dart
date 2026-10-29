@@ -2,14 +2,16 @@ import '../util/backoff.dart';
 
 /// Gmail per-user quota settings.
 ///
-/// Gmail allows 250 quota units per user per second (moving average) and
-/// rejects bursts with 429. Defaults stay a little below that so that other
-/// clients of the same project (another Plume window) have headroom.
+/// Gmail allows 6,000 quota units per user per minute (the limit for
+/// projects created since May 2026; older projects may have more) and
+/// rejects the excess with 429. Pacing lets at most burst + 60 s × rate =
+/// 5,600 units through in any minute, leaving headroom for other clients
+/// of the same project (another Plume window).
 final class GmailQuota {
   const GmailQuota({
-    this.unitsPerSecond = 220,
-    this.burstUnits = 250,
-    this.maxBatchUnits = 250,
+    this.unitsPerSecond = 80,
+    this.burstUnits = 800,
+    this.maxBatchUnits = 800,
     this.maxBatchSize = 50,
   });
 
@@ -19,8 +21,8 @@ final class GmailQuota {
   /// Units that may be spent at once before pacing kicks in.
   final double burstUnits;
 
-  /// Upper bound of units in one batch request. With threads.get at 10
-  /// units, this yields batches of 25 threads; messages.get (5) gives 50.
+  /// Upper bound of units in one batch request. With threads.get at 40
+  /// units, this yields batches of 20 threads; messages.get (20) gives 40.
   final int maxBatchUnits;
 
   /// Gmail rejects batches above 100 and recommends at most 50.

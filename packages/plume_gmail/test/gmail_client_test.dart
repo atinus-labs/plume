@@ -145,10 +145,10 @@ HTTP/1.1 204 No Content
       }
       final api = GmailApi(clientFor(gmail.client, FakeTokenSource(), quota: const GmailQuota(unitsPerSecond: 1e9, burstUnits: 1e9)));
       await api.getThreads([for (var i = 0; i < 60; i++) 't$i']);
-      expect(gmail.batchSizes, [25, 25, 10], reason: 'threads.get is 10 units; 250 units per batch');
+      expect(gmail.batchSizes, [20, 20, 20], reason: 'threads.get is 40 units; 800 units per batch');
       gmail.batchSizes.clear();
       await api.getMessages([for (var i = 0; i < 60; i++) 'm$i']);
-      expect(gmail.batchSizes, [50, 10], reason: 'messages.get is 5 units; at most 50 per batch');
+      expect(gmail.batchSizes, [40, 20], reason: 'messages.get is 20 units; 800 units per batch');
     });
 
     test('a 401 in parts invalidates the token once and retries', () async {

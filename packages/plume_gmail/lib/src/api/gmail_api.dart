@@ -25,7 +25,8 @@ final class BatchResult<T> {
 /// Thin typed client over `https://gmail.googleapis.com/gmail/v1/users/me`.
 ///
 /// Every method maps onto one documented endpoint; quota costs are declared
-/// per call so the [GmailClient] can pace them.
+/// per call so the [GmailClient] can pace them. Costs follow Google's table
+/// at https://developers.google.com/workspace/gmail/api/reference/quota.
 final class GmailApi {
   GmailApi(this.client);
 
@@ -84,7 +85,8 @@ final class GmailApi {
   }
 
   static GmailRequest threadGetRequest(String id, {GmailFormat format = GmailFormat.metadata}) =>
-      GmailRequest('GET', 'threads/${_seg(id)}', cost: 10, query: _formatQuery(format));
+      GmailRequest('GET', 'threads/${_seg(id)}',
+          cost: format == GmailFormat.full ? 120 : 40, query: _formatQuery(format));
 
   Future<GmailThread> getThread(String id, {GmailFormat format = GmailFormat.metadata}) async =>
       GmailThread.fromJson(_obj(await client.send(threadGetRequest(id, format: format))));
@@ -103,7 +105,7 @@ final class GmailApi {
       ]);
 
   Future<void> trashThreads(List<String> ids) =>
-      _batchVoid([for (final id in ids) GmailRequest('POST', 'threads/${_seg(id)}/trash', cost: 10)]);
+      _batchVoid([for (final id in ids) GmailRequest('POST', 'threads/${_seg(id)}/trash', cost: 20)]);
 
   Future<void> untrashThreads(List<String> ids) =>
       _batchVoid([for (final id in ids) GmailRequest('POST', 'threads/${_seg(id)}/untrash', cost: 10)]);
@@ -114,7 +116,8 @@ final class GmailApi {
   // Messages ---------------------------------------------------------------
 
   static GmailRequest messageGetRequest(String id, {GmailFormat format = GmailFormat.metadata}) =>
-      GmailRequest('GET', 'messages/${_seg(id)}', cost: 5, query: _formatQuery(format));
+      GmailRequest('GET', 'messages/${_seg(id)}',
+          cost: format == GmailFormat.full || format == GmailFormat.raw ? 60 : 20, query: _formatQuery(format));
 
   Future<GmailMessage> getMessage(String id, {GmailFormat format = GmailFormat.metadata}) async =>
       GmailMessage.fromJson(_obj(await client.send(messageGetRequest(id, format: format))));
@@ -155,7 +158,7 @@ final class GmailApi {
   }
 
   Future<void> trashMessages(List<String> ids) =>
-      _batchVoid([for (final id in ids) GmailRequest('POST', 'messages/${_seg(id)}/trash', cost: 5)]);
+      _batchVoid([for (final id in ids) GmailRequest('POST', 'messages/${_seg(id)}/trash', cost: 20)]);
 
   Future<void> untrashMessages(List<String> ids) =>
       _batchVoid([for (final id in ids) GmailRequest('POST', 'messages/${_seg(id)}/untrash', cost: 5)]);
@@ -175,7 +178,7 @@ final class GmailApi {
 
   Future<Uint8List> getAttachment(String messageId, String attachmentId) async {
     final json = _obj(await client.send(
-        GmailRequest('GET', 'messages/${_seg(messageId)}/attachments/${_seg(attachmentId)}', cost: 5)));
+        GmailRequest('GET', 'messages/${_seg(messageId)}/attachments/${_seg(attachmentId)}', cost: 20)));
     return decodeGmailData(json.str('data') ?? '');
   }
 
