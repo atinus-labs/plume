@@ -1,10 +1,12 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:async/async.dart';
 import 'package:plume_core/plume_core.dart';
 import 'package:plume_gmail/plume_gmail.dart';
+import 'package:plume_gmail/src/imap/imap_doorbell.dart' show enableTcpKeepAlive;
 import 'package:plume_gmail/src/imap/imap_reader.dart';
 import 'package:test/test.dart';
 
@@ -308,5 +310,18 @@ void main() {
       expect(sleeps.first, lessThanOrEqualTo(const Duration(seconds: 2)));
       expect(sleeps[3], greaterThan(sleeps[0]), reason: 'exponential');
     });
+
+    test('TCP keepalive is switched on with the configured idle time', () async {
+      final server = await ServerSocket.bind(InternetAddress.loopbackIPv4, 0);
+      addTearDown(server.close);
+      final socket = await Socket.connect(InternetAddress.loopbackIPv4, server.port);
+      addTearDown(socket.destroy);
+      enableTcpKeepAlive(socket, idle: const Duration(seconds: 60));
+      int option(int level, int name) =>
+          ByteData.sublistView(socket.getRawOption(RawSocketOption(level, name, Uint8List(4)))).getInt32(0, Endian.host);
+      expect(option(RawSocketOption.levelSocket, 9), isNonZero, reason: 'SO_KEEPALIVE');
+      expect(option(RawSocketOption.levelTcp, 4), 60, reason: 'TCP_KEEPIDLE');
+      expect(option(RawSocketOption.levelTcp, 6), 4, reason: 'TCP_KEEPCNT');
+    }, testOn: 'linux');
   });
 }

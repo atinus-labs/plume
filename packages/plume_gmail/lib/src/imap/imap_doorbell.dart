@@ -25,6 +25,7 @@ final class ImapDoorbellConfig {
     this.debounce = const Duration(seconds: 1),
     this.commandTimeout = const Duration(seconds: 30),
     this.connectTimeout = const Duration(seconds: 30),
+    this.keepAliveIdle = const Duration(seconds: 60),
     this.backoff = const RetryBackoff(initial: Duration(seconds: 2), max: Duration(minutes: 5)),
   });
 
@@ -43,6 +44,12 @@ final class ImapDoorbellConfig {
   /// connections when IDLE is restarted).
   final Duration commandTimeout;
   final Duration connectTimeout;
+
+  /// Silence after which TCP keepalive probes start. IDLE sends nothing
+  /// for minutes, and routers silently drop connections that look idle;
+  /// the probes keep them open, and a connection that died anyway fails
+  /// within about two minutes instead of at the next IDLE restart.
+  final Duration keepAliveIdle;
   final RetryBackoff backoff;
 }
 
@@ -91,10 +98,29 @@ final class GmailImapDoorbell {
     return controller.stream;
   }
 
-  Future<Socket> _open() {
+  Future<Socket> _open() async {
     final connect = _connect;
     if (connect != null) return connect();
-    return SecureSocket.connect(config.host, config.port, timeout: config.connectTimeout);
+    final socket = await SecureSocket.connect(config.host, config.port, timeout: config.connectTimeout);
+    enableTcpKeepAlive(socket, idle: config.keepAliveIdle);
+    return socket;
+  }
+}
+
+/// Turns on TCP keepalive: a probe after [idle] of silence, then every 15 s,
+/// giving up after 4 unanswered probes. Linux only (the option numbers are
+/// Linux's); elsewhere the socket is left as is.
+void enableTcpKeepAlive(Socket socket, {required Duration idle}) {
+  if (!Platform.isLinux) return;
+  const soKeepAlive = 9, tcpKeepIdle = 4, tcpKeepInterval = 5, tcpKeepCount = 6;
+  try {
+    socket
+      ..setRawOption(RawSocketOption.fromBool(RawSocketOption.levelSocket, soKeepAlive, true))
+      ..setRawOption(RawSocketOption.fromInt(RawSocketOption.levelTcp, tcpKeepIdle, idle.inSeconds))
+      ..setRawOption(RawSocketOption.fromInt(RawSocketOption.levelTcp, tcpKeepInterval, 15))
+      ..setRawOption(RawSocketOption.fromInt(RawSocketOption.levelTcp, tcpKeepCount, 4));
+  } on Object catch (e) {
+    _log.fine('Could not enable TCP keepalive: $e');
   }
 }
 
