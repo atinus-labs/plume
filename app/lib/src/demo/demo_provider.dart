@@ -226,6 +226,15 @@ final class DemoProvider implements MailProvider {
     (7, 'Tokyo meetup — venue confirmed', [
       "We've locked in the venue for the November meetup in Shibuya. 120 RSVPs so far! Would you be up for a 10-minute lightning talk?",
     ], 'CATEGORY_PERSONAL', {'Label_travel'}),
+    (3, 'Studio offsite — dates and agenda', [
+      'Kicking off planning for the studio offsite. I was thinking the last week of November, somewhere we can reach by train. Thoughts?',
+      'Last week of November works. Train-only is a great constraint, let me look at a few places.',
+      'Found a converted farmhouse two hours out. Twelve rooms, a big kitchen and a barn we can use as a workshop space.',
+      'That looks perfect. Can we keep one afternoon completely free? Last year was too packed.',
+      'Agreed, Wednesday afternoon is officially unscheduled. I will put a hike on the list as an option, not a plan.',
+      'Love it. Send over the draft agenda when you have it and I will share it with the team on Monday.',
+      "Here's the draft. Monday: arrivals, dinner together and a short round of what everyone wants out of the week. Tuesday: the morning is for the roadmap, the afternoon for small groups working on whatever came up the night before. Wednesday: a slow breakfast, then the afternoon is free as promised. Thursday: demos of anything built during the week, followed by the retrospective and a long dinner. Friday: breakfast and trains home. I've kept every session short and left gaps between them, because the best conversations last time happened in the hallway. Budget is within what we agreed, including the barn and the train tickets. Let me know what you'd change before I send it to everyone.",
+    ], 'CATEGORY_PERSONAL', {'Label_work'}),
   ];
 
   static const _bulk = <(String, String, String, String)>[

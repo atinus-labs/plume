@@ -40,11 +40,20 @@ class EmptyState extends StatelessWidget {
             children: [
               SizedBox.square(
                 dimension: 112,
-                child: illustration ?? Material(
-                  color: scheme.secondaryContainer,
-                  shape: RadialShapeBorder(shape ?? Shapes.cookie9),
-                  child: Icon(icon, size: 44, color: scheme.onSecondaryContainer),
-                ),
+                // The shape turns into place as it settles; the icon on it
+                // stays upright.
+                child: illustration ??
+                    TweenAnimationBuilder<double>(
+                      tween: Tween(begin: reduceMotion(context) ? 0 : -0.5, end: 0),
+                      duration: Spring.spatialSlow.duration,
+                      curve: Spring.spatialSlow.curve,
+                      builder: (context, turn, child) => Material(
+                        color: scheme.secondaryContainer,
+                        shape: RadialShapeBorder(shape ?? Shapes.cookie9, rotation: turn),
+                        child: child,
+                      ),
+                      child: Icon(icon, size: 44, color: scheme.onSecondaryContainer),
+                    ),
               ),
               const SizedBox(height: Space.xl),
               Text(title, style: theme.textTheme.titleLargeEmphasized, textAlign: TextAlign.center),

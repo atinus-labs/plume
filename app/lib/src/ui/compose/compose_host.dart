@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:intl/intl.dart';
@@ -184,10 +186,18 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
     );
   }
 
-  void close(int id) => state = [
-    for (final r in state)
-      if (r.id != id) r,
-  ];
+  final _sent = <int>{};
+
+  /// Whether window [id] closed by sending, which it leaves differently.
+  bool wasSent(int id) => _sent.contains(id);
+
+  void close(int id, {bool sent = false}) {
+    if (sent) _sent.add(id);
+    state = [
+      for (final r in state)
+        if (r.id != id) r,
+    ];
+  }
 
   void _open(ComposeRequest request) {
     // At most three docked windows, like other desktop clients.
@@ -251,13 +261,42 @@ class _ComposeHostState extends ConsumerState<ComposeHost> {
   static final _keys = <int, GlobalKey>{};
   final _dragOffsets = <int, Offset>{};
 
+  /// Windows that just closed, kept on screen for their exit.
+  final _closing = <int, _Closing>{};
+
+  /// Where each docked window was last placed.
+  final _slots = <int, ({double? left, double? right, double bottom})>{};
+  int? _lastMaximized;
+
+  void _onClosed(List<ComposeRequest>? previous, List<ComposeRequest> next) {
+    final notifier = ref.read(composeProvider.notifier);
+    for (final r in previous ?? const <ComposeRequest>[]) {
+      if (next.any((n) => n.id == r.id)) continue;
+      setState(() {
+        _closing[r.id] = _Closing(
+          r,
+          sent: notifier.wasSent(r.id),
+          maximized: _lastMaximized == r.id,
+          slot: _slots[r.id],
+        );
+      });
+      Timer(_Exit.duration, () {
+        if (mounted) setState(() => _closing.remove(r.id));
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    ref.listen(composeProvider, _onClosed);
     final requests = ref.watch(composeProvider);
     final maximized = ref.watch(maximizedComposeProvider);
-    _keys.removeWhere((id, _) => !requests.any((r) => r.id == id));
+    _lastMaximized = maximized;
+    bool alive(int id) => requests.any((r) => r.id == id) || _closing.containsKey(id);
+    _keys.removeWhere((id, _) => !alive(id));
     _dragOffsets.removeWhere((id, _) => !requests.any((r) => r.id == id));
-    if (requests.isEmpty) return const SizedBox.shrink();
+    _slots.removeWhere((id, _) => !alive(id));
+    if (requests.isEmpty && _closing.isEmpty) return const SizedBox.shrink();
     GlobalKey keyFor(int id) =>
         _keys.putIfAbsent(id, () => GlobalKey(debugLabel: 'compose-$id'));
     final docked = requests.where((r) => r.id != maximized).toList();
@@ -286,14 +325,29 @@ class _ComposeHostState extends ConsumerState<ComposeHost> {
                 () {
                   final r = docked[i];
                   final drag = _dragOffsets[r.id] ?? Offset.zero;
-                  final baseRight =
-                      16.0 + (docked.length - 1 - i) * (560.0 + 12.0);
-                  final baseLeft =
-                      leftOffset + (docked.length - 1 - i) * (560.0 + 12.0);
-                  return Positioned(
-                    left: dockLeft ? baseLeft + drag.dx : null,
-                    right: dockLeft ? null : baseRight - drag.dx,
-                    bottom: -drag.dy,
+                  final base = (dockLeft ? leftOffset : 16.0) +
+                      (docked.length - 1 - i) * (560.0 + 12.0);
+                  // When a neighbour closes, the rest slide over to fill
+                  // the dock; dragging stays direct.
+                  return TweenAnimationBuilder<double>(
+                    key: ValueKey(r.id),
+                    tween: Tween(end: base),
+                    duration: Spring.spatial.duration,
+                    curve: Spring.spatial.curve,
+                    builder: (context, b, child) {
+                      final slot = (
+                        left: dockLeft ? b + drag.dx : null,
+                        right: dockLeft ? null : b - drag.dx,
+                        bottom: -drag.dy,
+                      );
+                      _slots[r.id] = slot;
+                      return Positioned(
+                        left: slot.left,
+                        right: slot.right,
+                        bottom: slot.bottom,
+                        child: child!,
+                      );
+                    },
                     child: ComposePanel(
                       key: keyFor(r.id),
                       request: r,
@@ -309,16 +363,40 @@ class _ComposeHostState extends ConsumerState<ComposeHost> {
                   );
                 }(),
               ],
-              if (big != null) ...[
-                Positioned.fill(
-                  child: GestureDetector(
-                    onTap: () =>
-                        ref.read(maximizedComposeProvider.notifier).set(null),
-                    child: ColoredBox(
-                      color: scheme.scrim.withValues(alpha: 0.32),
+              for (final c in _closing.values.where((c) => !c.maximized && c.slot != null))
+                Positioned(
+                  key: ValueKey(c.request.id),
+                  left: c.slot!.left,
+                  right: c.slot!.right,
+                  bottom: c.slot!.bottom,
+                  child: _Exit(
+                    sent: c.sent,
+                    alignment: dockLeft ? Alignment.bottomLeft : Alignment.bottomRight,
+                    child: ComposePanel(
+                      key: keyFor(c.request.id),
+                      request: c.request,
+                      maximized: false,
+                      dockLeft: dockLeft,
                     ),
                   ),
                 ),
+              Positioned.fill(
+                child: IgnorePointer(
+                  ignoring: big == null,
+                  child: AnimatedOpacity(
+                    opacity: big == null ? 0 : 1,
+                    duration: Spring.effects.duration,
+                    child: GestureDetector(
+                      onTap: () =>
+                          ref.read(maximizedComposeProvider.notifier).set(null),
+                      child: ColoredBox(
+                        color: scheme.scrim.withValues(alpha: 0.32),
+                      ),
+                    ),
+                  ),
+                ),
+              ),
+              if (big != null)
                 Positioned.fill(
                   child: Center(
                     child: Padding(
@@ -331,10 +409,88 @@ class _ComposeHostState extends ConsumerState<ComposeHost> {
                     ),
                   ),
                 ),
-              ],
+              for (final c in _closing.values.where((c) => c.maximized))
+                Positioned.fill(
+                  child: Center(
+                    child: Padding(
+                      padding: const EdgeInsets.all(32),
+                      child: _Exit(
+                        sent: c.sent,
+                        alignment: Alignment.center,
+                        child: ComposePanel(
+                          key: keyFor(c.request.id),
+                          request: c.request,
+                          maximized: true,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
             ],
           );
         },
+      ),
+    );
+  }
+}
+
+final class _Closing {
+  const _Closing(this.request, {required this.sent, required this.maximized, required this.slot});
+
+  final ComposeRequest request;
+  final bool sent;
+  final bool maximized;
+  final ({double? left, double? right, double bottom})? slot;
+}
+
+/// A compose window on its way out. Sent mail lifts away; a closed draft
+/// sinks back towards the corner it came from.
+class _Exit extends StatefulWidget {
+  const _Exit({required this.sent, required this.alignment, required this.child});
+
+  final bool sent;
+  final Alignment alignment;
+  final Widget child;
+
+  static const duration = Duration(milliseconds: 220);
+
+  @override
+  State<_Exit> createState() => _ExitState();
+}
+
+class _ExitState extends State<_Exit> with SingleTickerProviderStateMixin {
+  late final _controller = AnimationController(vsync: this, duration: _Exit.duration)..forward();
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final still = reduceMotion(context);
+    return IgnorePointer(
+      child: ExcludeFocus(
+        child: AnimatedBuilder(
+          animation: _controller,
+          builder: (context, child) {
+            final t = Easing.emphasizedAccelerate.transform(_controller.value);
+            final scale = still ? 1.0 : 1 - 0.06 * t;
+            final dy = still ? 0.0 : (widget.sent ? -48.0 : 32.0) * t;
+            return Opacity(
+              opacity: 1 - unit(_controller.value / 0.8),
+              child: Transform(
+                alignment: widget.alignment,
+                transform: Matrix4.identity()
+                  ..translateByDouble(0, dy, 0, 1)
+                  ..scaleByDouble(scale, scale, 1, 1),
+                child: child,
+              ),
+            );
+          },
+          child: widget.child,
+        ),
       ),
     );
   }

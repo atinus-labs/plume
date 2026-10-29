@@ -264,20 +264,25 @@ class _DestinationState extends State<_Destination> {
               ),
             ),
           ),
-          if (_hover && !widget.active)
-            Positioned.fill(
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Container(
-                  width: math.min(rowWidth, 64 + (rowWidth - 64) * unit(t)),
-                  height: t > 0.5 ? 52 : 36,
-                  decoration: BoxDecoration(
-                    color: scheme.onSurface.withValues(alpha: 0.08),
-                    borderRadius: Corners.all(Corners.full),
-                  ),
-                ),
-              ),
+          Positioned.fill(
+            child: SpringBuilder(
+              value: _hover && !widget.active ? 1 : 0,
+              spring: Spring.effectsFast,
+              builder: (context, h, _) => h <= 0.001
+                  ? const SizedBox.shrink()
+                  : Align(
+                      alignment: Alignment.centerLeft,
+                      child: Container(
+                        width: math.min(rowWidth, 64 + (rowWidth - 64) * unit(t)),
+                        height: t > 0.5 ? 52 : 36,
+                        decoration: BoxDecoration(
+                          color: scheme.onSurface.withValues(alpha: 0.08 * unit(h)),
+                          borderRadius: Corners.all(Corners.full),
+                        ),
+                      ),
+                    ),
             ),
+          ),
           Positioned.fill(
             child: Row(
               children: [
@@ -286,7 +291,7 @@ class _DestinationState extends State<_Destination> {
                   child: Center(
                     child: Badge(
                       isLabelVisible: widget.badge > 0 && t < 0.5 && !widget.badgeMuted,
-                      label: Text(widget.badge > 99 ? '99+' : '${widget.badge}'),
+                      label: AnimatedCount(widget.badge, format: (n) => n > 99 ? '99+' : '$n'),
                       child: SpringBuilder(
                         value: widget.active ? 1 : 0,
                         spring: Spring.effects,
@@ -320,8 +325,8 @@ class _DestinationState extends State<_Destination> {
                           if (widget.badge > 0)
                             Padding(
                               padding: const EdgeInsets.only(right: 16, left: 8),
-                              child: Text(
-                                '${widget.badge}',
+                              child: AnimatedCount(
+                                widget.badge,
                                 style: (widget.badgeMuted ? theme.textTheme.labelMedium : theme.textTheme.labelMediumEmphasized)
                                     ?.copyWith(color: widget.badgeMuted ? scheme.onSurfaceVariant : scheme.primary),
                               ),

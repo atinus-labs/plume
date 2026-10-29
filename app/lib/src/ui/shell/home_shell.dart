@@ -129,7 +129,11 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                           children: [
                             NavRailHost(expanded: false, onOpenSettings: _openSettings),
                             Expanded(
-                              child: open == null ? const ThreadListPane() : const Pane(child: ReaderPane(showBack: true)),
+                              child: _ListDetail(
+                                showDetail: open != null,
+                                list: const ThreadListPane(),
+                                detail: const Pane(child: ReaderPane(showBack: true)),
+                              ),
                             ),
                           ],
                         ),
@@ -137,9 +141,11 @@ class _HomeShellState extends ConsumerState<HomeShell> {
                     }
                     return Padding(
                       padding: EdgeInsets.only(top: top),
-                      child: open == null
-                          ? ThreadListPane(onOpenDrawer: () => _scaffold.currentState?.openDrawer())
-                          : const Pane(radius: 0, child: ReaderPane(showBack: true)),
+                      child: _ListDetail(
+                        showDetail: open != null,
+                        list: ThreadListPane(onOpenDrawer: () => _scaffold.currentState?.openDrawer()),
+                        detail: const Pane(radius: 0, child: ReaderPane(showBack: true)),
+                      ),
                     );
                   }),
                 ),
@@ -235,6 +241,24 @@ class _HomeShellState extends ConsumerState<HomeShell> {
     };
     return result ? KeyEventResult.handled : KeyEventResult.ignored;
   }
+}
+
+/// List and reader sharing one pane on narrow windows. Opening a
+/// conversation moves forward along the horizontal axis; back reverses it.
+class _ListDetail extends StatelessWidget {
+  const _ListDetail({required this.showDetail, required this.list, required this.detail});
+
+  final bool showDetail;
+  final Widget list;
+  final Widget detail;
+
+  @override
+  Widget build(BuildContext context) => AnimatedSwitcher(
+        duration: kSwitchDuration,
+        transitionBuilder: sharedAxis(axis: Axis.horizontal, direction: showDetail ? 1 : -1),
+        layoutBuilder: (current, previous) => Stack(fit: StackFit.expand, children: [...previous, ?current]),
+        child: KeyedSubtree(key: ValueKey(showDetail), child: showDetail ? detail : list),
+      );
 }
 
 /// The draggable divider between list and reading pane.

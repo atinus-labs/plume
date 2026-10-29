@@ -7,6 +7,7 @@ import 'package:plume_core/plume_core.dart';
 import 'package:plume_design/plume_design.dart';
 
 import '../../state/mail.dart';
+import '../../state/avatars.dart';
 import '../../state/navigation.dart';
 import '../actions.dart';
 import '../common/empty_state.dart';
@@ -14,28 +15,39 @@ import '../common/logo.dart';
 import '../compose/compose_host.dart';
 import 'message_card.dart';
 
-/// The reading pane. Cross-fades between conversations with a short
-/// shared-axis style motion.
-class ReaderPane extends ConsumerWidget {
+/// The reading pane. Moving to an older conversation slides the new one up
+/// from below and a newer one down from above, matching where it sits in
+/// the list; anything else fades through.
+class ReaderPane extends ConsumerStatefulWidget {
   const ReaderPane({super.key, this.showBack = false});
 
   /// Single-pane layouts show a back button instead of the list.
   final bool showBack;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    final open = ref.watch(openThreadProvider);
+  ConsumerState<ReaderPane> createState() => _ReaderPaneState();
+}
+
+class _ReaderPaneState extends ConsumerState<ReaderPane> {
+  ThreadKey? _last;
+  int _direction = 0;
+
+  @override
+  Widget build(BuildContext context) {
+    final showBack = widget.showBack;
+    // In single-pane layouts the reader slides away when closed; it keeps
+    // the conversation on it while it goes instead of flashing empty.
+    final open = ref.watch(openThreadProvider) ?? (showBack ? _last : null);
+    if (open != _last) {
+      final list = ref.read(visibleThreadsProvider).value ?? const <ThreadSummary>[];
+      final from = _last == null ? -1 : list.indexWhere((t) => keyOf(t) == _last);
+      final to = open == null ? -1 : list.indexWhere((t) => keyOf(t) == open);
+      _direction = from < 0 || to < 0 ? 0 : (to - from).sign;
+      _last = open;
+    }
     return AnimatedSwitcher(
-      duration: Spring.standard.duration,
-      switchInCurve: Spring.standard.curve,
-      switchOutCurve: Curves.easeOut,
-      transitionBuilder: (child, animation) => FadeTransition(
-        opacity: animation,
-        child: SlideTransition(
-          position: Tween(begin: const Offset(0, 0.015), end: Offset.zero).animate(animation),
-          child: child,
-        ),
-      ),
+      duration: kSwitchDuration,
+      transitionBuilder: _direction == 0 ? fadeThrough : sharedAxis(direction: _direction, distance: 40),
       child: open == null
           ? const _NothingOpen(key: ValueKey('empty'))
           : ThreadView(key: ValueKey(open), threadKey: open, showBack: showBack),
@@ -80,7 +92,7 @@ class ThreadView extends ConsumerWidget {
   }
 }
 
-class _ThreadBody extends ConsumerWidget {
+class _ThreadBody extends ConsumerStatefulWidget {
   const _ThreadBody({required this.thread, required this.myEmail, required this.showBack});
 
   final ThreadDetail thread;
@@ -88,7 +100,68 @@ class _ThreadBody extends ConsumerWidget {
   final bool showBack;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
+  ConsumerState<_ThreadBody> createState() => _ThreadBodyState();
+}
+
+const _toolbarHeight = 64.0;
+
+class _ThreadBodyState extends ConsumerState<_ThreadBody> {
+  final _scroll = ScrollController();
+  final _subjectKey = GlobalKey();
+
+  /// Content has scrolled under the toolbar: it fills, like an M3 top app
+  /// bar in its scrolled state.
+  final _scrolled = ValueNotifier(false);
+
+  /// The subject has scrolled away, so the toolbar shows it instead.
+  final _titleInBar = ValueNotifier(false);
+
+  /// The reply toolbar steps aside while reading down and comes back on the
+  /// way up or at the end of the conversation, where replying is next.
+  final _replyBar = ValueNotifier(true);
+  double _lastOffset = 0;
+
+  /// Older read messages folded into one row in long conversations.
+  bool _unfolded = false;
+  Set<String> _folded = const {};
+
+  @override
+  void initState() {
+    super.initState();
+    _scroll.addListener(_onScroll);
+  }
+
+  @override
+  void dispose() {
+    _scroll.dispose();
+    _scrolled.dispose();
+    _titleInBar.dispose();
+    _replyBar.dispose();
+    super.dispose();
+  }
+
+  void _onScroll() {
+    final p = _scroll.position;
+    final offset = p.pixels;
+    _scrolled.value = offset > 1;
+    final subject = _subjectKey.currentContext?.findRenderObject() as RenderBox?;
+    _titleInBar.value = offset > (subject?.hasSize == true ? subject!.size.height - 8 : 56);
+    final delta = offset - _lastOffset;
+    _lastOffset = offset;
+    if (offset < 48 || p.extentAfter < 48) {
+      _replyBar.value = true;
+    } else if (delta > 2) {
+      _replyBar.value = false;
+    } else if (delta < -2) {
+      _replyBar.value = true;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final thread = widget.thread;
+    final myEmail = widget.myEmail;
+    final showBack = widget.showBack;
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final summary = thread.summary;
@@ -108,9 +181,28 @@ class _ThreadBody extends ConsumerWidget {
     final inSpam = view.kind == ViewKind.junk;
     final inInbox = summary.mailboxIds.any((id) => mailboxes.any((m) => m.id == id && m.role == MailboxRole.inbox));
     final folders = ref.watch(usesFoldersProvider(summary.accountId));
+    final subject = summary.subject.isEmpty ? '(no subject)' : summary.subject;
 
-    final toolbar = Padding(
-      padding: const EdgeInsets.fromLTRB(12, 10, 12, 0),
+    // Long conversations fold the run of read messages after the first one,
+    // keeping the opening, the unread and the latest in view.
+    if (!_unfolded && messages.length > 4) {
+      var end = 1;
+      while (end < messages.length - 2 && messages[end].isRead) {
+        end++;
+      }
+      final run = messages.sublist(1, end);
+      _folded = run.length >= 2 ? {for (final m in run) m.id} : const {};
+    }
+    final showFold = !_unfolded && _folded.isNotEmpty;
+    final shown = [
+      for (final m in messages)
+        if (!showFold || !_folded.contains(m.id)) m,
+    ];
+    final cardCount = shown.length + (showFold ? 1 : 0);
+
+    final toolbar = Container(
+      height: _toolbarHeight,
+      padding: const EdgeInsets.symmetric(horizontal: 12),
       child: Row(
         children: [
           if (showBack)
@@ -138,9 +230,31 @@ class _ThreadBody extends ConsumerWidget {
             _MoveMenu(summary: summary, targets: ref.watch(moveTargetsProvider(summary.accountId)))
           else
             _LabelMenu(summary: summary, labels: mailboxes.where((m) => m.kind == MailboxKind.user && !m.hidden).toList()),
-          const Spacer(),
+          // The subject moves up here once it has scrolled out of view.
+          Expanded(
+            child: ValueListenableBuilder(
+              valueListenable: _titleInBar,
+              builder: (context, inBar, _) => AnimatedSlide(
+                offset: inBar ? Offset.zero : const Offset(0, 0.35),
+                duration: Spring.standard.duration,
+                curve: Spring.standard.curve,
+                child: AnimatedOpacity(
+                  opacity: inBar ? 1 : 0,
+                  duration: Spring.effects.duration,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 12),
+                    child: Text(subject, maxLines: 1, overflow: TextOverflow.ellipsis, style: theme.textTheme.titleMediumEmphasized),
+                  ),
+                ),
+              ),
+            ),
+          ),
           if (position >= 0) ...[
-            Text('${position + 1} of ${list.length}', style: theme.textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant)),
+            AnimatedCount(
+              position + 1,
+              format: (n) => '$n of ${list.length}',
+              style: theme.textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant),
+            ),
             _ToolButton(Symbols.chevron_left_rounded, 'Newer (K)', position > 0 ? () => stepThread(ref, -1) : null),
             _ToolButton(Symbols.chevron_right_rounded, 'Older (J)', position < list.length - 1 ? () => stepThread(ref, 1) : null),
           ],
@@ -148,73 +262,180 @@ class _ThreadBody extends ConsumerWidget {
       ),
     );
 
+    // One step above the cards, so they read as passing underneath.
+    final fill = scheme.brightness == Brightness.light ? scheme.surfaceContainer : scheme.surfaceContainerHigh;
+    var index = 0;
     return Stack(
       children: [
-        Column(
-          children: [
-            toolbar,
-            Expanded(
-              child: SelectionContainer.disabled(
-                child: Scrollbar(
-                  child: ListView(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 112),
-                    children: [
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            SelectableText(
-                              summary.subject.isEmpty ? '(no subject)' : summary.subject,
-                              style: theme.textTheme.headlineSmallEmphasized,
-                            ),
-                            if (labelChips.isNotEmpty || summary.isFlagged) ...[
-                              const SizedBox(height: 10),
-                              Wrap(
-                                spacing: 6,
-                                runSpacing: 6,
-                                children: [
-                                  for (final m in labelChips) _LabelChip(mailbox: m, onRemove: m.kind == MailboxKind.user && !folders
-                                      ? () => applyLabels(ref, [key], remove: {m.id})
-                                      : null),
-                                ],
-                              ),
+        Positioned.fill(
+          child: SelectionContainer.disabled(
+            child: Scrollbar(
+              controller: _scroll,
+              child: ListView(
+                controller: _scroll,
+                padding: const EdgeInsets.fromLTRB(16, _toolbarHeight + 2, 16, 112),
+                children: [
+                  Padding(
+                    key: _subjectKey,
+                    padding: const EdgeInsets.fromLTRB(16, 4, 16, 16),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        SelectableText(
+                          subject,
+                          style: theme.textTheme.headlineSmallEmphasized,
+                        ),
+                        if (labelChips.isNotEmpty || summary.isFlagged) ...[
+                          const SizedBox(height: 10),
+                          Wrap(
+                            spacing: 6,
+                            runSpacing: 6,
+                            children: [
+                              for (final m in labelChips) _LabelChip(mailbox: m, onRemove: m.kind == MailboxKind.user && !folders
+                                  ? () => applyLabels(ref, [key], remove: {m.id})
+                                  : null),
                             ],
-                          ],
-                        ),
-                      ),
-                      for (var i = 0; i < messages.length; i++)
-                        MessageCard(
-                          key: ValueKey(messages[i].id),
-                          message: messages[i],
-                          index: i,
-                          count: messages.length,
-                          myEmail: myEmail,
-                          initiallyExpanded: i == messages.length - 1 || !messages[i].isRead,
-                        ),
-                    ],
+                          ),
+                        ],
+                      ],
+                    ),
                   ),
-                ),
+                  for (final m in shown) ...[
+                    if (showFold && index == 1)
+                      _FoldedMessages(
+                        messages: [for (final f in messages) if (_folded.contains(f.id)) f],
+                        index: index++,
+                        count: cardCount,
+                        onTap: () => setState(() => _unfolded = true),
+                      ),
+                    Presence(
+                      key: ValueKey(m.id),
+                      appear: _unfolded && _folded.contains(m.id),
+                      child: MessageCard(
+                        message: m,
+                        index: index++,
+                        count: cardCount,
+                        myEmail: myEmail,
+                        initiallyExpanded: m == messages.last || !m.isRead,
+                      ),
+                    ),
+                  ],
+                ],
               ),
             ),
-          ],
+          ),
+        ),
+        Positioned(
+          left: 0,
+          right: 0,
+          top: 0,
+          child: ValueListenableBuilder(
+            valueListenable: _scrolled,
+            builder: (context, scrolled, child) => SpringBuilder(
+              value: scrolled ? 1 : 0,
+              spring: Spring.effects,
+              builder: (context, t, child) => ColoredBox(color: fill.withValues(alpha: unit(t)), child: child),
+              child: child,
+            ),
+            child: toolbar,
+          ),
         ),
         Positioned(
           left: 0,
           right: 0,
           bottom: 20,
           child: Center(
-            child: FloatingToolbar(
-              vibrant: true,
-              children: [
-                _ReplyButton(icon: Symbols.reply_rounded, label: 'Reply', onPressed: () => ref.read(composeProvider.notifier).reply(messages.last, all: false)),
-                _ReplyButton(icon: Symbols.reply_all_rounded, label: 'Reply all', onPressed: () => ref.read(composeProvider.notifier).reply(messages.last, all: true)),
-                _ReplyButton(icon: Symbols.forward_rounded, label: 'Forward', onPressed: () => ref.read(composeProvider.notifier).forward(messages.last)),
-              ],
+            child: ValueListenableBuilder(
+              valueListenable: _replyBar,
+              builder: (context, visible, child) => IgnorePointer(
+                ignoring: !visible,
+                child: SpringBuilder(
+                  value: visible ? 1 : 0,
+                  spring: visible ? Spring.spatial : Spring.standard,
+                  builder: (context, t, child) => Transform.translate(
+                    offset: Offset(0, (1 - t) * 96),
+                    child: Opacity(opacity: unit(t), child: child),
+                  ),
+                  child: child,
+                ),
+              ),
+              child: FloatingToolbar(
+                vibrant: true,
+                children: [
+                  _ReplyButton(icon: Symbols.reply_rounded, label: 'Reply', onPressed: () => ref.read(composeProvider.notifier).reply(messages.last, all: false)),
+                  _ReplyButton(icon: Symbols.reply_all_rounded, label: 'Reply all', onPressed: () => ref.read(composeProvider.notifier).reply(messages.last, all: true)),
+                  _ReplyButton(icon: Symbols.forward_rounded, label: 'Forward', onPressed: () => ref.read(composeProvider.notifier).forward(messages.last)),
+                ],
+              ),
             ),
           ),
         ),
       ],
+    );
+  }
+}
+
+/// The folded run of older messages: who wrote them and how many, opening
+/// them in place when clicked.
+class _FoldedMessages extends ConsumerWidget {
+  const _FoldedMessages({required this.messages, required this.index, required this.count, required this.onTap});
+
+  final List<Message> messages;
+  final int index;
+  final int count;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final card = messageCardColor(scheme);
+    final senders = <String, Address>{
+      for (final m in messages.reversed)
+        if (m.from != null) m.from!.email.toLowerCase(): m.from!,
+    }.values.take(3).toList();
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Material(
+        color: card,
+        shape: RoundedRectangleBorder(borderRadius: groupedRadius(index, count, outer: Corners.extraLarge, inner: Corners.small)),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 10, 20, 10),
+            child: Row(
+              children: [
+                SizedBox(
+                  width: 32.0 + 14 * (senders.length - 1),
+                  height: 32,
+                  child: Stack(
+                    children: [
+                      for (var i = senders.length - 1; i >= 0; i--)
+                        Positioned(
+                          left: 14.0 * i,
+                          child: DecoratedBox(
+                            decoration: BoxDecoration(shape: BoxShape.circle, border: Border.all(color: card, width: 2)),
+                            child: MorphAvatar(
+                              name: senders[i].displayName,
+                              colorKey: senders[i].email,
+                              image: ref.watch(senderAvatarProvider(senders[i].email)).value,
+                              size: 28,
+                            ),
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: 14),
+                Text('${messages.length} older messages', style: theme.textTheme.labelLargeEmphasized.copyWith(color: scheme.primary)),
+                const SizedBox(width: 4),
+                Icon(Symbols.unfold_more_rounded, size: 18, color: scheme.primary),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
 }
