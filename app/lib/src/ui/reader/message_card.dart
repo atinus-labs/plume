@@ -16,6 +16,10 @@ import '../common/format.dart';
 import '../compose/compose_host.dart';
 import 'html_body.dart';
 
+/// The colour of a message card, which simple HTML mail is rendered on.
+Color messageCardColor(ColorScheme scheme) =>
+    scheme.brightness == Brightness.light ? scheme.surfaceContainerLow : scheme.surfaceContainer;
+
 /// One message in a conversation. Collapsed messages show a single line;
 /// expanding springs the body open.
 class MessageCard extends ConsumerStatefulWidget {
@@ -49,19 +53,31 @@ class _MessageCardState extends ConsumerState<MessageCard> {
     final m = widget.message;
     final from = m.from;
     final isMe = from?.email.toLowerCase() == widget.myEmail.toLowerCase();
-    final cardColor = scheme.brightness == Brightness.light ? scheme.surfaceContainerLow : scheme.surfaceContainer;
-
     return Padding(
       padding: const EdgeInsets.only(bottom: 3),
       child: Material(
-        color: cardColor,
+        color: messageCardColor(scheme),
         shape: RoundedRectangleBorder(borderRadius: groupedRadius(widget.index, widget.count, outer: Corners.extraLarge, inner: Corners.small)),
         clipBehavior: Clip.antiAlias,
+        // The card resizes while the two layouts cross-fade on top of each
+        // other, so the content never jumps.
         child: AnimatedSize(
           duration: Spring.spatial.duration,
           curve: Spring.spatial.curve,
           alignment: Alignment.topCenter,
-          child: _expanded ? _expandedView(theme, m, from, isMe) : _collapsedView(theme, m, from, isMe),
+          child: AnimatedSwitcher(
+            duration: Spring.effects.duration,
+            layoutBuilder: (current, previous) => Stack(
+              clipBehavior: Clip.none,
+              children: [
+                for (final p in previous) Positioned(top: 0, left: 0, right: 0, child: p),
+                ?current,
+              ],
+            ),
+            child: _expanded
+                ? KeyedSubtree(key: const ValueKey('expanded'), child: _expandedView(theme, m, from, isMe))
+                : KeyedSubtree(key: const ValueKey('collapsed'), child: _collapsedView(theme, m, from, isMe)),
+          ),
         ),
       ),
     );
@@ -161,8 +177,11 @@ class _MessageCardState extends ConsumerState<MessageCard> {
                     IconButton(
                       tooltip: m.isFlagged ? 'Unstar' : 'Star',
                       onPressed: () => applyMessageAction(ref, m.isFlagged ? MailAction.unflag : MailAction.flag, m.accountId, [m.id]),
-                      icon: Icon(Symbols.star_rounded, fill: m.isFlagged ? 1 : 0,
-                          color: m.isFlagged ? const Color(0xFFE8A200) : scheme.onSurfaceVariant),
+                      icon: Pop(
+                        active: m.isFlagged,
+                        child: Icon(Symbols.star_rounded, fill: m.isFlagged ? 1 : 0,
+                            color: m.isFlagged ? const Color(0xFFE8A200) : scheme.onSurfaceVariant),
+                      ),
                     ),
                     IconButton(
                       tooltip: 'Reply',

@@ -263,7 +263,7 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     final engine = ref.read(engineProvider);
     final delay = Duration(seconds: ref.read(settingsProvider).undoSendSeconds);
     final outboxId = await engine.send(message, delay: delay);
-    ref.read(composeProvider.notifier).close(widget.request.id);
+    ref.read(composeProvider.notifier).close(widget.request.id, sent: true);
     final composer = ref.read(composeProvider.notifier);
     showSnack(
       delay == Duration.zero ? 'Sending…' : 'Message scheduled to send',

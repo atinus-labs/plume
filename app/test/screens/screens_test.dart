@@ -28,6 +28,7 @@ import 'package:plume/src/ui/app.dart';
 import 'package:plume/src/ui/compose/compose_host.dart';
 import 'package:plume/src/ui/compose/rich_text.dart';
 import 'package:plume/src/ui/onboarding/add_account.dart';
+import 'package:plume/src/ui/reader/reader_pane.dart';
 import 'package:plume_core/plume_core.dart';
 import 'package:plume_store/plume_store.dart';
 
@@ -122,6 +123,25 @@ final _scenarios = <String, List<Step>>{
       final list = c.read(visibleThreadsProvider).value!;
       openThread(c, list.firstWhere((x) => x.subject.contains('Five essays'), orElse: () => list.first));
     },
+  ],
+  'long_thread': [
+    (t, c) async {
+      final list = c.read(visibleThreadsProvider).value!;
+      openThread(c, list.firstWhere((x) => x.subject.contains('offsite')));
+    },
+  ],
+  'long_thread_scrolled': [
+    (t, c) async {
+      final list = c.read(visibleThreadsProvider).value!;
+      openThread(c, list.firstWhere((x) => x.subject.contains('offsite')));
+    },
+    (t, c) async => t.tap(find.textContaining('older messages')),
+    (t, c) async => t.tap(find.textContaining('Found a converted farmhouse')),
+    (t, c) async => t.tap(find.textContaining('That looks perfect')),
+    (t, c) async => t.drag(
+          find.descendant(of: find.byType(ReaderPane), matching: find.byType(Scrollable)).first,
+          const Offset(0, -400),
+        ),
   ],
   'selection': [
     (t, c) async {
