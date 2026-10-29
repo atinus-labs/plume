@@ -32,10 +32,12 @@ constexpr guint kRetryMs = 250;
 
 // Snapshot rows per tile, so each tile fits in a GPU texture.
 constexpr gint kTileRows = 2048;
-// Cairo image surfaces are limited to 32767 pixels per side.
+// Cairo image surfaces are limited to 32767 pixels per side; taller
+// documents are captured a viewport at a time.
 constexpr gint kMaxSide = 32000;
 constexpr gint64 kDefaultMaxPixels = 24ll * 1024 * 1024;
 // Shrinking wide layouts to fit stops here; past it they are clipped.
+// (WebKit keeps text at 9 device pixels or more, so text may reflow.)
 constexpr gdouble kMinFit = 0.3;
 
 // The script result marking a document that is not the requested one yet
@@ -53,9 +55,8 @@ typedef enum {
   STATE_RESIZING,
   STATE_LOADING,
   STATE_PREPARING,
-  STATE_FITTING,
-  STATE_COLLECTING,
   STATE_MEASURING,
+  STATE_COLLECTING,
   STATE_SNAPSHOT,
 } SlotState;
 
@@ -78,13 +79,24 @@ typedef struct {
   gboolean timed_out;
   gint64 started_at;
 
+  // Layout adjustments made so far.
+  gboolean fitted;
+  gboolean budgeted;
+  gint widget_width;  // GTK units
+  gdouble zoom;
+
   // Results so far.
   gchar* prepared;
   gchar* collected;
-  gint widget_width;  // GTK units
-  gdouble zoom;
   gdouble viewport_width;  // CSS px
   gdouble content_height;  // CSS px
+
+  // The snapshot as RGBA rows, when captured a viewport at a time.
+  guint8* pixels;
+  gint pixel_width;
+  gint pixel_height;
+  gint slice_css;  // CSS px per viewport
+  gint slice_top;  // CSS px
 } Job;
 
 typedef struct _Slot Slot;
@@ -133,6 +145,7 @@ static void job_free(Job* job) {
   g_free(job->options);
   g_free(job->prepared);
   g_free(job->collected);
+  g_free(job->pixels);
   g_free(job);
 }
 
@@ -397,15 +410,17 @@ static gboolean resize_timeout_cb(gpointer user_data) {
   return G_SOURCE_REMOVE;
 }
 
-// Sizes the view to [width] GTK units wide (and 1 tall, so documents
-// measure at their content height) with [zoom], then continues with [next]
-// once the view has the new size.
+// Sizes the view to [width] × [height] GTK units with [zoom], then
+// continues with [next] once the view has the new size. Views are 1 unit
+// tall while measuring, so documents measure at their content height.
 static void configure(Slot* slot,
                       gint width,
+                      gint height,
                       gdouble zoom,
                       SlotContinuation next) {
   webkit_web_view_set_zoom_level(slot->view, zoom);
-  if (gtk_widget_get_allocated_width(GTK_WIDGET(slot->view)) == width) {
+  if (gtk_widget_get_allocated_width(GTK_WIDGET(slot->view)) == width &&
+      gtk_widget_get_allocated_height(GTK_WIDGET(slot->view)) == height) {
     next(slot);
     return;
   }
@@ -414,8 +429,8 @@ static void configure(Slot* slot,
   slot->size_allocate_id = g_signal_connect_after(
       slot->view, "size-allocate", G_CALLBACK(size_allocate_cb), slot);
   slot->resize_timeout_id = g_timeout_add(500, resize_timeout_cb, slot);
-  gtk_widget_set_size_request(GTK_WIDGET(slot->view), width, 1);
-  gtk_window_resize(GTK_WINDOW(slot->window), width, 1);
+  gtk_widget_set_size_request(GTK_WIDGET(slot->view), width, height);
+  gtk_window_resize(GTK_WINDOW(slot->window), width, height);
 }
 
 static void start_load(Slot* slot) {
@@ -461,6 +476,7 @@ static gchar* script_result(GObject* source,
 
 static void snapshot_cb(GObject* source, GAsyncResult* result, gpointer data);
 static void measure_cb(GObject* source, GAsyncResult* result, gpointer data);
+static void start_slices(Slot* slot);
 
 static void take_snapshot(Slot* slot) {
   slot->state = STATE_SNAPSHOT;
@@ -470,8 +486,7 @@ static void take_snapshot(Slot* slot) {
 }
 
 static void run_measure(Slot* slot) {
-  slot->state = slot->job->collected == nullptr ? STATE_FITTING
-                                                : STATE_MEASURING;
+  slot->state = STATE_MEASURING;
   webkit_web_view_evaluate_javascript(slot->view, kMeasureScript, -1, nullptr,
                                       nullptr, nullptr, measure_cb,
                                       op_new(slot));
@@ -501,8 +516,9 @@ static void run_collect(Slot* slot) {
       nullptr, collect_cb, op_new(slot));
 }
 
-// Shrinks wide layouts to fit (before collecting), then checks the pixel
-// budget (after collecting) and snapshots.
+// Before collecting: shrinks wide layouts to fit and keeps the snapshot
+// within the pixel budget, re-measuring after each change (WebKit's minimum
+// text size can reflow a zoomed-out layout). After collecting: snapshots.
 static void measure_cb(GObject* source, GAsyncResult* result, gpointer data) {
   Slot* slot = op_finish(data);
   g_autoptr(GError) error = nullptr;
@@ -520,44 +536,49 @@ static void measure_cb(GObject* source, GAsyncResult* result, gpointer data) {
   g_autoptr(JSCValue) v2 = jsc_value_object_get_property_at_index(value, 2);
   gdouble scroll_width = jsc_value_to_double(v0);
   gdouble viewport_width = jsc_value_to_double(v1);
-  gdouble scroll_height = jsc_value_to_double(v2);
+  gdouble scroll_height = MAX(jsc_value_to_double(v2), 1.0);
   Job* job = slot->job;
+  gint gtk_scale = gtk_widget_get_scale_factor(GTK_WIDGET(slot->view));
 
-  if (slot->state == STATE_FITTING) {
+  if (!job->fitted) {
+    job->fitted = TRUE;
     if (scroll_width > viewport_width + 1 && viewport_width > 0) {
       // A fixed-width layout wider than the pane: zoom out so it fits, as
       // mail apps on small screens do, instead of clipping it.
-      gdouble fit = MAX(viewport_width / scroll_width, kMinFit);
-      job->zoom *= fit;
+      job->zoom *= MAX(viewport_width / scroll_width, kMinFit);
       webkit_web_view_set_zoom_level(slot->view, job->zoom);
+      run_measure(slot);
+      return;
     }
+  }
+
+  if (!job->budgeted) {
+    job->budgeted = TRUE;
+    // Long messages render fewer device pixels per CSS pixel.
+    gdouble pixels = (gdouble)job->widget_width * gtk_scale * scroll_height *
+                     job->zoom * gtk_scale;
+    if (pixels > job->max_pixels) {
+      gdouble k = sqrt(job->max_pixels / pixels);
+      gint width = MAX(1, (gint)floor(job->widget_width * k));
+      job->zoom *= (gdouble)width / job->widget_width;
+      job->widget_width = width;
+      configure(slot, width, 1, job->zoom, run_measure);
+      return;
+    }
+  }
+
+  if (job->collected == nullptr) {
     run_collect(slot);
     return;
   }
 
   job->viewport_width = viewport_width;
-  job->content_height = MAX(scroll_height, 1.0);
-
-  // Keep the snapshot within the pixel budget and cairo's limits by
-  // rendering fewer device pixels per CSS pixel; the layout is unchanged.
-  gint gtk_scale = gtk_widget_get_scale_factor(GTK_WIDGET(slot->view));
-  gdouble device_scale = job->zoom * gtk_scale;
-  gdouble pixel_width = job->widget_width * gtk_scale;
-  gdouble pixel_height = ceil(job->content_height * device_scale);
-  gdouble k = 1.0;
-  if (pixel_width * pixel_height > job->max_pixels) {
-    k = sqrt(job->max_pixels / (pixel_width * pixel_height));
+  job->content_height = scroll_height;
+  if (ceil(scroll_height * job->zoom * gtk_scale) > kMaxSide) {
+    start_slices(slot);
+  } else {
+    take_snapshot(slot);
   }
-  k = MIN(k, kMaxSide / pixel_height);
-  k = MIN(k, kMaxSide / pixel_width);
-  if (k < 0.99) {
-    gint width = MAX(1, (gint)floor(job->widget_width * k));
-    job->zoom *= (gdouble)width / job->widget_width;
-    job->widget_width = width;
-    configure(slot, width, job->zoom, take_snapshot);
-    return;
-  }
-  take_snapshot(slot);
 }
 
 static void prepare_cb(GObject* source, GAsyncResult* result, gpointer data) {
@@ -612,11 +633,13 @@ static void run_prepare(Slot* slot) {
       prepare_cb, op_new(slot));
 }
 
-// Splits [surface] into tiles of RGBA rows (premultiplied).
-static FlValue* tiles_from_surface(cairo_surface_t* surface,
-                                   gint* out_width,
-                                   gint* out_height) {
-  g_autoptr(FlValue) tiles = fl_value_new_list();
+// Copies [surface] into [pixels] (RGBA rows, premultiplied, [width] wide
+// and [height] tall) from row [top], clipping to the buffer.
+static void copy_surface(cairo_surface_t* surface,
+                         guint8* pixels,
+                         gint width,
+                         gint height,
+                         gint top) {
   cairo_surface_t* image = cairo_surface_reference(surface);
   if (cairo_surface_get_type(surface) != CAIRO_SURFACE_TYPE_IMAGE) {
     double x1, y1, x2, y2;
@@ -632,61 +655,46 @@ static FlValue* tiles_from_surface(cairo_surface_t* surface,
     cairo_destroy(cr);
   }
   cairo_surface_flush(image);
-  gint width = cairo_image_surface_get_width(image);
-  gint height = cairo_image_surface_get_height(image);
+  const guint8* data = cairo_image_surface_get_data(image);
   gint stride = cairo_image_surface_get_stride(image);
+  gint columns = MIN(width, cairo_image_surface_get_width(image));
+  gint rows = MIN(cairo_image_surface_get_height(image), height - top);
   gboolean opaque_format =
       cairo_image_surface_get_format(image) == CAIRO_FORMAT_RGB24;
   // Cairo stores native-endian 32-bit ARGB, i.e. BGRA bytes on the
   // little-endian machines Plume runs on.
   G_STATIC_ASSERT(G_BYTE_ORDER == G_LITTLE_ENDIAN);
-  const guint8* data = cairo_image_surface_get_data(image);
-  gsize row_bytes = (gsize)width * 4;
-  for (gint top = 0; data != nullptr && top < height; top += kTileRows) {
-    gint rows = MIN(kTileRows, height - top);
-    g_autofree guint8* tile = static_cast<guint8*>(g_malloc(row_bytes * rows));
-    for (gint y = 0; y < rows; y++) {
-      const guint8* in = data + (gsize)stride * (top + y);
-      guint8* out = tile + row_bytes * y;
-      for (gint x = 0; x < width; x++, in += 4, out += 4) {
-        out[0] = in[2];
-        out[1] = in[1];
-        out[2] = in[0];
-        out[3] = opaque_format ? 0xff : in[3];
-      }
+  for (gint y = 0; data != nullptr && y < rows; y++) {
+    if (top + y < 0) {
+      continue;
     }
-    fl_value_append_take(tiles, fl_value_new_uint8_list(tile, row_bytes * rows));
+    const guint8* in = data + (gsize)stride * y;
+    guint8* out = pixels + ((gsize)width * (top + y)) * 4;
+    for (gint x = 0; x < columns; x++, in += 4, out += 4) {
+      out[0] = in[2];
+      out[1] = in[1];
+      out[2] = in[0];
+      out[3] = opaque_format ? 0xff : in[3];
+    }
   }
   cairo_surface_destroy(image);
-  *out_width = width;
-  *out_height = height;
-  return fl_value_ref(tiles);
 }
 
-static void snapshot_cb(GObject* source, GAsyncResult* result, gpointer data) {
-  Slot* slot = op_finish(data);
-  g_autoptr(GError) error = nullptr;
-  cairo_surface_t* surface = webkit_web_view_get_snapshot_finish(
-      WEBKIT_WEB_VIEW(source), result, &error);
-  if (slot == nullptr) {
-    if (surface != nullptr) {
-      cairo_surface_destroy(surface);
-    }
-    return;
-  }
-  if (surface == nullptr) {
-    fail(slot, "failed", error->message);
-    return;
-  }
-
+// Sends the job's pixels to Dart in tiles, and moves on to the next job.
+static void finish(Slot* slot) {
   Job* job = slot->job;
-  gint width = 0, height = 0;
-  g_autoptr(FlValue) tiles = tiles_from_surface(surface, &width, &height);
-  cairo_surface_destroy(surface);
+  gsize row_bytes = (gsize)job->pixel_width * 4;
+  g_autoptr(FlValue) tiles = fl_value_new_list();
+  for (gint top = 0; top < job->pixel_height; top += kTileRows) {
+    gint rows = MIN(kTileRows, job->pixel_height - top);
+    fl_value_append_take(tiles, fl_value_new_uint8_list(
+                                    job->pixels + row_bytes * top,
+                                    row_bytes * rows));
+  }
 
   g_autoptr(FlValue) map = fl_value_new_map();
-  fl_value_set_string_take(map, "width", fl_value_new_int(width));
-  fl_value_set_string_take(map, "height", fl_value_new_int(height));
+  fl_value_set_string_take(map, "width", fl_value_new_int(job->pixel_width));
+  fl_value_set_string_take(map, "height", fl_value_new_int(job->pixel_height));
   fl_value_set_string_take(map, "tileRows", fl_value_new_int(kTileRows));
   fl_value_set_string(map, "tiles", tiles);
   fl_value_set_string_take(map, "viewportWidth",
@@ -708,6 +716,134 @@ static void snapshot_cb(GObject* source, GAsyncResult* result, gpointer data) {
   respond(job->call, response);
   job_free(job);
   pump(slot->renderer);
+}
+
+// Allocates the job's pixel buffer, failing the job if it can't.
+static gboolean allocate_pixels(Slot* slot, gint width, gint height) {
+  Job* job = slot->job;
+  job->pixel_width = width;
+  job->pixel_height = height;
+  job->pixels = static_cast<guint8*>(g_try_malloc0((gsize)width * height * 4));
+  if (job->pixels == nullptr) {
+    fail(slot, "failed", "Out of memory");
+    return FALSE;
+  }
+  return TRUE;
+}
+
+static void snapshot_cb(GObject* source, GAsyncResult* result, gpointer data) {
+  Slot* slot = op_finish(data);
+  g_autoptr(GError) error = nullptr;
+  cairo_surface_t* surface = webkit_web_view_get_snapshot_finish(
+      WEBKIT_WEB_VIEW(source), result, &error);
+  if (slot == nullptr) {
+    if (surface != nullptr) {
+      cairo_surface_destroy(surface);
+    }
+    return;
+  }
+  if (surface == nullptr) {
+    fail(slot, "failed", error->message);
+    return;
+  }
+  gint width = cairo_image_surface_get_width(surface);
+  gint height = cairo_image_surface_get_height(surface);
+  if (allocate_pixels(slot, width, height)) {
+    copy_surface(surface, slot->job->pixels, width, height, 0);
+    finish(slot);
+  }
+  cairo_surface_destroy(surface);
+}
+
+static void scroll_slice(Slot* slot);
+static void slice_scrolled_cb(GObject* source,
+                              GAsyncResult* result,
+                              gpointer data);
+
+static void slice_snapshot_cb(GObject* source,
+                              GAsyncResult* result,
+                              gpointer data) {
+  Slot* slot = op_finish(data);
+  g_autoptr(GError) error = nullptr;
+  cairo_surface_t* surface = webkit_web_view_get_snapshot_finish(
+      WEBKIT_WEB_VIEW(source), result, &error);
+  if (slot == nullptr) {
+    if (surface != nullptr) {
+      cairo_surface_destroy(surface);
+    }
+    return;
+  }
+  if (surface == nullptr) {
+    fail(slot, "failed", error->message);
+    return;
+  }
+  Job* job = slot->job;
+  gint gtk_scale = gtk_widget_get_scale_factor(GTK_WIDGET(slot->view));
+  gint top = (gint)round(job->slice_top * job->zoom * gtk_scale);
+  gint bottom = top + cairo_image_surface_get_height(surface);
+  copy_surface(surface, job->pixels, job->pixel_width, job->pixel_height, top);
+  cairo_surface_destroy(surface);
+  job->slice_top += job->slice_css;
+  if (bottom >= job->pixel_height || job->slice_top >= job->content_height) {
+    finish(slot);
+  } else {
+    scroll_slice(slot);
+  }
+}
+
+// Shows the next viewport of the document. The result is where it really
+// scrolled to, which is less than asked at the end of the document.
+static void slice_scrolled_cb(GObject* source,
+                              GAsyncResult* result,
+                              gpointer data) {
+  Slot* slot = op_finish(data);
+  g_autoptr(GError) error = nullptr;
+  g_autoptr(JSCValue) value = webkit_web_view_evaluate_javascript_finish(
+      WEBKIT_WEB_VIEW(source), result, &error);
+  if (slot == nullptr) {
+    return;
+  }
+  if (value == nullptr) {
+    fail(slot, "failed", error->message);
+    return;
+  }
+  Job* job = slot->job;
+  gint scrolled = (gint)jsc_value_to_double(value);
+  if (job->slice_top > 0 && scrolled <= job->slice_top - job->slice_css) {
+    // The document stopped scrolling short of its measured height.
+    finish(slot);
+    return;
+  }
+  job->slice_top = scrolled;
+  webkit_web_view_get_snapshot(slot->view, WEBKIT_SNAPSHOT_REGION_VISIBLE,
+                               WEBKIT_SNAPSHOT_OPTIONS_NONE, nullptr,
+                               slice_snapshot_cb, op_new(slot));
+}
+
+static void scroll_slice(Slot* slot) {
+  g_autofree gchar* script = g_strdup_printf(
+      "document.documentElement.style.overflow = 'hidden';"
+      "scrollTo(0, %d); scrollY",
+      slot->job->slice_top);
+  webkit_web_view_evaluate_javascript(slot->view, script, -1, nullptr, nullptr,
+                                      nullptr, slice_scrolled_cb,
+                                      op_new(slot));
+}
+
+// Captures a document too tall for one snapshot a viewport at a time.
+static void start_slices(Slot* slot) {
+  Job* job = slot->job;
+  slot->state = STATE_SNAPSHOT;
+  gint gtk_scale = gtk_widget_get_scale_factor(GTK_WIDGET(slot->view));
+  gdouble device_scale = job->zoom * gtk_scale;
+  if (!allocate_pixels(slot, job->widget_width * gtk_scale,
+                       (gint)ceil(job->content_height * device_scale))) {
+    return;
+  }
+  job->slice_css = MAX(1, (gint)floor(kTileRows / device_scale));
+  job->slice_top = 0;
+  configure(slot, job->widget_width,
+            (gint)ceil(job->slice_css * job->zoom), job->zoom, scroll_slice);
 }
 
 static Slot* idle_slot(PlumeMailRenderer* self) {
@@ -739,7 +875,7 @@ static void pump(PlumeMailRenderer* self) {
     job->widget_width =
         MAX(1, (gint)round(job->width * job->scale / gtk_scale));
     job->zoom = job->scale / gtk_scale;
-    configure(slot, job->widget_width, job->zoom, start_load);
+    configure(slot, job->widget_width, 1, job->zoom, start_load);
   }
 }
 

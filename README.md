@@ -18,6 +18,7 @@ A fast mail client for the Linux desktop, built with Flutter and Material 3 Expr
 - Local SQLite cache, optimistic actions that replay when back online, and offline reading
 - Push notifications via IMAP IDLE, with Open, Archive and Mark as read actions
 - Tray icon with unread count; closing the window keeps Plume running
+- HTML mail rendered by WebKit, as in other mail apps; simple mail follows the app's light or dark theme
 - Remote images blocked by default; tracking pixels removed
 - Compose with rich-text formatting, autocomplete, attachments, drafts, undo send and per-account signatures
 - Instant local search, with server search on Enter
@@ -27,7 +28,7 @@ A fast mail client for the Linux desktop, built with Flutter and Material 3 Expr
 
 ## Install
 
-Requires Flutter 3.47+, `clang`, `cmake`, `ninja`, `pkgconf`, `gtk3` and `libsecret`.
+Requires Flutter 3.47+, `clang`, `cmake`, `ninja`, `pkgconf`, `gtk3`, `webkit2gtk-4.1` and `libsecret`.
 
 ```sh
 tool/install.sh                                              # build and install to ~/.local
@@ -94,7 +95,7 @@ A Dart pub workspace. Provider and store interfaces are kept separate so new pro
 
 | Package | Purpose |
 |---|---|
-| `app` | Flutter app (Riverpod) and GTK runner |
+| `app` | Flutter app (Riverpod) and GTK runner, which renders HTML mail with WebKitGTK |
 | `packages/plume_core` | Mail model, provider and store contracts, sync engine, operation queue, outbox |
 | `packages/plume_gmail` | Gmail API provider with OAuth (PKCE) and incremental sync |
 | `packages/plume_imap` | IMAP/SMTP provider, threading and server discovery |
@@ -120,7 +121,6 @@ Set `PLUME_ALLOW_MULTIPLE_INSTANCES=1` to run more than one instance during deve
 
 ## Known limitations
 
-- Complex newsletter layouts may render differently than in a browser
 - GNOME needs the AppIndicator extension to show the tray icon
 - Snooze and scheduled send are unavailable for Gmail
 - IMAP accounts: restoring a conversation from Trash moves all of it to the Inbox

@@ -1,4 +1,3 @@
-import 'dart:io'; // TEMP-VERIFY
 import 'dart:async';
 import 'dart:math';
 import 'dart:typed_data';
@@ -329,8 +328,6 @@ final class DemoProvider implements MailProvider {
       );
       _messages[id] = m;
       _bodies[id] = name == 'The Browser' ? _newsletter() : MessageBody(text: snippet, html: '<p>$snippet</p>');
-      final devHtml = File('${Platform.environment['PLUME_DEV_HTML_DIR'] ?? '/nonexistent'}/$name.html'); // TEMP-VERIFY
-      if (devHtml.existsSync()) _bodies[id] = MessageBody(html: devHtml.readAsStringSync(), text: snippet); // TEMP-VERIFY
       out.add(m);
     }
     return out;
