@@ -12,6 +12,7 @@ import 'package:url_launcher/url_launcher.dart';
 import '../../config.dart';
 import '../../services/accounts.dart';
 import '../../services/imap_connector.dart';
+import '../../state/mail.dart';
 import '../../state/navigation.dart';
 import '../../state/services.dart';
 import '../actions.dart';
@@ -84,7 +85,7 @@ class _AddAccountPanelState extends ConsumerState<AddAccountPanel> {
   }
 
   void _finished(Account account, {required bool alreadyAdded}) {
-    ref.read(viewProvider.notifier).show(ref.read(viewProvider).forAccount(null));
+    ref.read(viewProvider.notifier).show(ref.read(viewProvider).forAccount(null, inboxCategory: ref.read(inboxCategoryProvider)));
     if (widget.inDialog) Navigator.of(context).pop();
     showSnack(alreadyAdded ? '${account.email} was already in Plume. Its settings were updated.' : '${account.email} added');
   }

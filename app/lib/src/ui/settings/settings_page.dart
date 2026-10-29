@@ -13,6 +13,7 @@ import '../../config.dart';
 import '../../platform/linux/graphics_engine.dart';
 import '../../services/desktop.dart';
 import '../../services/imap_connector.dart';
+import '../../services/window_frame.dart';
 import '../../state/mail.dart';
 import '../../state/services.dart';
 import '../../state/settings.dart';
@@ -33,6 +34,7 @@ class SettingsPage extends ConsumerWidget {
     final desktop = ref.watch(desktopProvider);
     final settings = ref.watch(settingsProvider);
     final notifier = ref.read(settingsProvider.notifier);
+    final titleBar = ref.watch(titleBarProvider);
     final accounts = ref.watch(accountsProvider).value ?? const <Account>[];
     final statuses = ref.watch(syncStatusProvider).value ?? const {};
 
@@ -40,7 +42,7 @@ class SettingsPage extends ConsumerWidget {
       backgroundColor: surfaces.window,
       body: Column(
         children: [
-          if (desktop.drawsWindowControls) const WindowTitleBar(),
+          if (titleBar == TitleBar.plume) const WindowTitleBar(),
           Expanded(
             child: CallbackShortcuts(
               bindings: {const SingleActivator(LogicalKeyboardKey.escape): () => Navigator.of(context).maybePop()},
@@ -177,6 +179,35 @@ class SettingsPage extends ConsumerWidget {
                               onSelectionChanged: (v) => notifier.update((s) => s.copyWith(mailListPosition: v.first)),
                             ),
                           ),
+                          if (desktop.windowFrame case final frame?)
+                            LayoutBuilder(builder: (context, constraints) {
+                              final picker = SegmentedButton<TitleBar>(
+                                key: const ValueKey('settings_title_bar'),
+                                showSelectedIcon: false,
+                                segments: [
+                                  for (final style in TitleBar.values) ButtonSegment(value: style, label: Text(style.label)),
+                                ],
+                                selected: {titleBar},
+                                onSelectionChanged: (v) {
+                                  notifier.update((s) => s.copyWith(titleBar: v.first));
+                                  unawaited(frame.apply(v.first));
+                                },
+                              );
+                              // Beside three segments, a narrow row leaves the
+                              // hint a word or two per line.
+                              final narrow = constraints.maxWidth < 600;
+                              return _Row(
+                                icon: Symbols.web_asset_rounded,
+                                title: 'Title bar',
+                                subtitle: switch (titleBar) {
+                                  TitleBar.plume => 'Window buttons in Plume’s style, arranged like your desktop’s',
+                                  TitleBar.system => 'Your desktop’s own title bar',
+                                  TitleBar.none => 'No title bar, for tiling window managers',
+                                },
+                                trailing: narrow ? null : picker,
+                                below: narrow ? picker : null,
+                              );
+                            }),
                         ]),
                         _Section(title: 'Notifications', children: [
                           _SwitchRow(

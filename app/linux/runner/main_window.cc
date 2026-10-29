@@ -333,6 +333,46 @@ static void get_drag_origin(PlumeMainWindow* self,
   gdk_device_get_position(pointer, nullptr, root_x, root_y);
 }
 
+// Opens the window manager's window menu (what a right-click on a title bar
+// shows) at the most recent button press.
+static void show_window_menu(PlumeMainWindow* self) {
+  GdkWindow* toplevel = gtk_widget_get_window(GTK_WIDGET(self->window));
+  if (self->last_button_press == nullptr || toplevel == nullptr) {
+    return;
+  }
+  // The press is relative to the window it landed in, such as FlView's; the
+  // menu is placed relative to the toplevel.
+  GdkEvent* event = gdk_event_copy(self->last_button_press);
+  gdouble x = event->button.x;
+  gdouble y = event->button.y;
+  for (GdkWindow* w = event->button.window; w != nullptr && w != toplevel;
+       w = gdk_window_get_parent(w)) {
+    gdk_window_coords_to_parent(w, x, y, &x, &y);
+  }
+  g_clear_object(&event->button.window);
+  event->button.window = GDK_WINDOW(g_object_ref(toplevel));
+  event->button.x = x;
+  event->button.y = y;
+  gdk_window_show_window_menu(toplevel, event);
+  gdk_event_free(event);
+}
+
+// The window buttons the desktop asks for and on which side, as GTK's
+// gtk-decoration-layout (e.g. "icon:minimize,maximize,close"). Empty when the
+// desktop doesn't say.
+static gchar* decoration_layout(PlumeMainWindow* self) {
+  gchar* layout = nullptr;
+  g_object_get(gtk_widget_get_settings(GTK_WIDGET(self->window)),
+               "gtk-decoration-layout", &layout, nullptr);
+  return layout != nullptr ? layout : g_strdup("");
+}
+
+static void decoration_layout_changed_cb(PlumeMainWindow* self) {
+  g_autofree gchar* layout = decoration_layout(self);
+  g_autoptr(FlValue) args = fl_value_new_string(layout);
+  invoke_dart(self, "onDecorationLayoutChanged", args);
+}
+
 static gboolean parse_edge(const gchar* name, GdkWindowEdge* edge) {
   static const struct {
     const gchar* name;
@@ -472,6 +512,24 @@ static void method_call_cb(FlMethodChannel* channel,
                                    timestamp);
       response = success();
     }
+  } else if (strcmp(method, "showWindowMenu") == 0) {
+    show_window_menu(self);
+    response = success();
+  } else if (strcmp(method, "setSystemTitleBar") == 0) {
+    gboolean visible;
+    if (!get_bool_argument(args, "visible", &visible)) {
+      response = bad_arguments("Expected a bool");
+    } else {
+      GtkWidget* header_bar = gtk_window_get_titlebar(window);
+      if (header_bar != nullptr) {
+        gtk_widget_set_visible(header_bar, visible);
+      }
+      response = success();
+    }
+  } else if (strcmp(method, "decorationLayout") == 0) {
+    g_autofree gchar* layout = decoration_layout(self);
+    g_autoptr(FlValue) result = fl_value_new_string(layout);
+    response = success(result);
   } else if (strcmp(method, "setPreventClose") == 0) {
     gboolean prevent_close;
     if (!get_bool_argument(args, "preventClose", &prevent_close)) {
@@ -486,6 +544,10 @@ static void method_call_cb(FlMethodChannel* channel,
       response = bad_arguments("Expected a string");
     } else {
       gtk_window_set_title(window, title);
+      GtkWidget* header_bar = gtk_window_get_titlebar(window);
+      if (GTK_IS_HEADER_BAR(header_bar)) {
+        gtk_header_bar_set_title(GTK_HEADER_BAR(header_bar), title);
+      }
       response = success();
     }
   } else if (strcmp(method, "takeOpenUris") == 0) {
@@ -584,6 +646,8 @@ static void plume_main_window_dispose(GObject* object) {
   }
   if (self->window != nullptr) {
     g_signal_handlers_disconnect_by_data(self->window, self);
+    g_signal_handlers_disconnect_by_data(
+        gtk_widget_get_settings(GTK_WIDGET(self->window)), self);
   }
   if (self->view != nullptr) {
     g_signal_handlers_disconnect_by_data(self->view, self);
@@ -636,15 +700,17 @@ PlumeMainWindow* plume_main_window_new(GtkApplication* application,
   gtk_window_set_icon_from_file(window, icon_path, nullptr);
   gtk_window_set_default_size(window, kDefaultWidth, kDefaultHeight);
 
-  // Hide the native title bar so Flutter can draw its own title area. An
-  // empty custom titlebar makes GTK use client-side decorations, which keeps
-  // the shadow and resize edges on compositors that expect CSD (GNOME) and
-  // overrides server-side title bars (KDE, X11 window managers). The widget
-  // is never shown, so it takes no space and no header bar is drawn; tiling
+  // The desktop's title bar, for when the user picks it in settings. Dart
+  // shows it (setSystemTitleBar) before the first frame; until then, and
+  // while Plume draws its own title bar or none, it stays hidden and takes no
+  // space. A custom titlebar makes GTK use client-side decorations, which
+  // keeps the shadow and resize edges on compositors that expect CSD (GNOME)
+  // and overrides server-side title bars (KDE, X11 window managers); tiling
   // compositors (Hyprland, sway) report tiled states and GTK drops the shadow.
-  GtkWidget* titlebar = gtk_box_new(GTK_ORIENTATION_HORIZONTAL, 0);
-  gtk_widget_set_size_request(titlebar, -1, 0);
-  gtk_window_set_titlebar(window, titlebar);
+  GtkWidget* header_bar = gtk_header_bar_new();
+  gtk_header_bar_set_title(GTK_HEADER_BAR(header_bar), kWindowTitle);
+  gtk_header_bar_set_show_close_button(GTK_HEADER_BAR(header_bar), TRUE);
+  gtk_window_set_titlebar(window, header_bar);
 
   // Must be connected before the view is realized (see delete_event_cb).
   g_signal_connect_swapped(window, "delete-event", G_CALLBACK(delete_event_cb),
@@ -655,6 +721,9 @@ PlumeMainWindow* plume_main_window_new(GtkApplication* application,
                            self);
   g_signal_connect_swapped(window, "hide", G_CALLBACK(schedule_state_update),
                            self);
+  g_signal_connect_swapped(gtk_widget_get_settings(GTK_WIDGET(window)),
+                           "notify::gtk-decoration-layout",
+                           G_CALLBACK(decoration_layout_changed_cb), self);
 
   self->background = gtk_css_provider_new();
   gtk_style_context_add_provider(

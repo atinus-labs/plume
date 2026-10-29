@@ -114,6 +114,7 @@ class LinuxWindow {
   final _activated = StreamController<LinuxWindowActivation>.broadcast();
   final _openUris = StreamController<List<String>>.broadcast();
   final _stateChanged = StreamController<LinuxWindowState>.broadcast();
+  final _decorationLayoutChanged = StreamController<String>.broadcast();
   LinuxWindowState _state = const LinuxWindowState();
 
   /// Whether the session runs a tiling compositor (Hyprland, sway, niri, i3…)
@@ -136,6 +137,9 @@ class LinuxWindow {
 
   /// The most recent state reported by the runner.
   LinuxWindowState get state => _state;
+
+  /// The desktop changed its window buttons; see [decorationLayout].
+  Stream<String> get decorationLayoutChanged => _decorationLayoutChanged.stream;
 
   /// Shows, raises and focuses the window. Pass the [activationToken] from a
   /// notification action or tray activation so Wayland compositors allow the
@@ -164,6 +168,22 @@ class LinuxWindow {
   Future<void> startResize(LinuxWindowEdge edge) =>
       _invoke<void>('startResize', edge.name);
 
+  /// Opens the window manager's window menu at the latest button press, as a
+  /// right-click on a title bar does. Call from the press.
+  Future<void> showWindowMenu() => _invoke<void>('showWindowMenu');
+
+  /// Shows the desktop's own title bar (a GTK header bar), or hides it for
+  /// Plume's. GTK keeps drawing the window's shadow and resize edges either
+  /// way.
+  Future<void> setSystemTitleBar(bool visible) =>
+      _invoke<void>('setSystemTitleBar', visible);
+
+  /// The window buttons the desktop asks for and on which side, as GTK's
+  /// `gtk-decoration-layout` (e.g. `close,minimize:` puts them on the left).
+  /// Empty when the desktop doesn't say.
+  Future<String> decorationLayout() async =>
+      await _invoke<String>('decorationLayout') ?? '';
+
   /// When enabled, the window close button hides the window and emits
   /// [closeRequested] instead of quitting.
   Future<void> setPreventClose(bool preventClose) =>
@@ -189,6 +209,7 @@ class LinuxWindow {
     unawaited(_activated.close());
     unawaited(_openUris.close());
     unawaited(_stateChanged.close());
+    unawaited(_decorationLayoutChanged.close());
   }
 
   Future<T?> _invoke<T>(String method, [Object? arguments]) async {
@@ -221,6 +242,9 @@ class LinuxWindow {
           _state = LinuxWindowState._fromMap(args);
           _stateChanged.add(_state);
         }
+      case 'onDecorationLayoutChanged':
+        final args = call.arguments;
+        if (args is String) _decorationLayoutChanged.add(args);
       default:
         _log.fine('Unhandled window callback ${call.method}');
         throw MissingPluginException();

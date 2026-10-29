@@ -37,6 +37,9 @@ class _AccountSwitcherState extends ConsumerState<AccountSwitcher> {
     final syncing = statuses.values.any((s) => s.phase == SyncPhase.syncing);
     final t = widget.t;
 
+    void show(String? accountId) =>
+        ref.read(viewProvider.notifier).show(view.forAccount(accountId, inboxCategory: ref.read(inboxCategoryProvider)));
+
     Widget avatarFor(Account? account, {double size = 36}) => account == null
         ? _StackedAvatars(accounts: accounts, size: size)
         : MorphAvatar(
@@ -60,7 +63,7 @@ class _AccountSwitcherState extends ConsumerState<AccountSwitcher> {
           title: 'All inboxes',
           subtitle: '${accounts.length} ${accounts.length == 1 ? 'account' : 'accounts'}',
           selected: view.accountId == null,
-          onTap: () => ref.read(viewProvider.notifier).show(view.forAccount(null)),
+          onTap: () => show(null),
         ),
         for (final a in accounts)
           _AccountItem(
@@ -69,7 +72,7 @@ class _AccountSwitcherState extends ConsumerState<AccountSwitcher> {
             subtitle: a.email,
             selected: view.accountId == a.id,
             warning: a.status == AccountStatus.needsReauth ? 'Sign in again' : null,
-            onTap: () => ref.read(viewProvider.notifier).show(view.forAccount(a.id)),
+            onTap: () => show(a.id),
           ),
         const Padding(padding: EdgeInsets.symmetric(vertical: 6, horizontal: 12), child: Divider()),
         MenuItemButton(

@@ -55,14 +55,13 @@ class _RailBody extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final view = ref.watch(viewProvider);
-    final settings = ref.watch(settingsProvider);
     final showLabels = t > 0.5;
     final accountId = view.accountId;
     final accounts = ref.watch(accountsProvider).value ?? const <Account>[];
     final mailboxes = ref.watch(mailboxesProvider(accountId)).value ?? const <Mailbox>[];
     final labels = mailboxes.where((m) => m.kind == MailboxKind.user && !m.hidden).toList()
       ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
-    final categories = ref.watch(hasCategoriesProvider) && settings.categoryTabs;
+    final inboxCategory = ref.watch(inboxCategoryProvider);
     final hasArchive = mailboxes.any((m) => m.role == MailboxRole.archive);
     final folderAccounts = {
       for (final a in accounts)
@@ -74,14 +73,14 @@ class _RailBody extends ConsumerWidget {
       _ => 'Labels and folders',
     };
 
-    MailView make(ViewKind kind) => MailView(kind, accountId: accountId, category: kind == ViewKind.inbox && categories ? MailCategory.primary : null);
+    MailView make(ViewKind kind) => MailView(kind, accountId: accountId, category: kind == ViewKind.inbox ? inboxCategory : null);
     bool isActive(ViewKind kind, {String? mailboxId}) =>
         view.kind == kind && (kind != ViewKind.label || view.mailboxId == mailboxId);
 
     final inboxUnread = ref
             .watch(unreadCountProvider(RoleFilter(MailboxRole.inbox,
                 accountIds: accountId == null ? null : {accountId},
-                category: categories ? MailCategory.primary : null)))
+                category: inboxCategory)))
             .value ??
         0;
     final drafts = ref.watch(threadsProvider(RoleFilter(MailboxRole.drafts, accountIds: accountId == null ? null : {accountId}))).value?.length ?? 0;

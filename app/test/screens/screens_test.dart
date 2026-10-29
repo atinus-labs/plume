@@ -19,6 +19,7 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plume/src/services/window_frame.dart';
 import 'package:plume/src/state/mail.dart';
 import 'package:plume/src/state/navigation.dart';
 import 'package:plume/src/state/services.dart';
@@ -193,7 +194,40 @@ final _scenarios = <String, List<Step>>{
     (t, c) async => c.read(settingsProvider.notifier).update((s) => s.copyWith(railExpanded: false)),
     (t, c) async => openThread(c, (c.read(visibleThreadsProvider).value!)[1]),
   ],
+  'title_bar': [],
+  'title_bar_left': [],
+  'title_bar_settings': [
+    (t, c) async {
+      await t.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
+      await t.sendKeyEvent(LogicalKeyboardKey.comma);
+      await t.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
+    },
+    (t, c) async => t.scrollUntilVisible(find.text('Title bar'), 300, scrollable: find.byType(Scrollable).first),
+    (t, c) async => Scrollable.ensureVisible(t.element(find.text('Title bar')), alignment: 0.5),
+  ],
 };
+
+/// Scenarios drawn as on a floating desktop: Plume's title bar, with the
+/// window buttons where GTK's decoration layout puts them.
+final _frames = <String, WindowFrame Function()>{
+  'title_bar': DemoWindowFrame.new,
+  'title_bar_left': () => DemoWindowFrame(layout: 'close,minimize,maximize:'),
+  'title_bar_settings': DemoWindowFrame.new,
+  'window_button_press': DemoWindowFrame.new,
+  'window_button_release': DemoWindowFrame.new,
+};
+
+/// The mouse holding a window button down, between motion steps.
+TestGesture? _windowButton;
+
+/// Moves the mouse onto Close and holds the button down.
+Future<void> _pressClose(WidgetTester t) async {
+  final at = t.getCenter(find.byTooltip('Close'));
+  final mouse = _windowButton = await t.createGesture(kind: PointerDeviceKind.mouse);
+  await mouse.addPointer(location: at);
+  await mouse.moveTo(at);
+  await mouse.down(at);
+}
 
 const _sizes = {
   'desktop': Size(1600, 1000),
@@ -233,11 +267,26 @@ class _Motion {
 Rect _listArea(Size w) => const Rect.fromLTWH(270, 180, 430, 560);
 Rect _readerArea(Size w) => Rect.fromLTWH(w.width - 900, 0, 900, 700);
 Rect _composeArea(Size w) => Rect.fromLTWH(w.width - 820, w.height - 700, 820, 700);
+Rect _titleBarArea(Size w) => Rect.fromLTWH(w.width - 240, 0, 240, 48);
 
 ThreadSummary _thread(WidgetRef c, String subject) =>
     c.read(visibleThreadsProvider).value!.firstWhere((x) => x.subject.contains(subject));
 
 final _motions = <String, _Motion>{
+  // A window button turns red under the mouse and squares off as it goes
+  // down...
+  'window_button_press': _Motion(
+    action: (t, c) async => _pressClose(t),
+    at: const [16, 40, 70, 120],
+    crop: _titleBarArea,
+  ),
+  // ...then springs back as it comes up.
+  'window_button_release': _Motion(
+    setup: [(t, c) async => _pressClose(t)],
+    action: (t, c) async => _windowButton!.up(),
+    at: const [16, 40, 70, 120, 200],
+    crop: _titleBarArea,
+  ),
   // J: the next conversation comes up from below.
   'open_next': _Motion(
     setup: [(t, c) async => openThread(c, (c.read(visibleThreadsProvider).value!).first)],
@@ -333,7 +382,7 @@ class _Harness {
     tester.platformDispatcher.platformBrightnessTestValue = brightness;
     addTearDown(tester.view.reset);
 
-    final services = (await tester.runAsync(demoServices))!;
+    final services = (await tester.runAsync(() => demoServices(frame: _frames[scenario]?.call())))!;
     final boundary = GlobalKey();
     final container = ProviderContainer(overrides: [
       servicesProvider.overrideWithValue(services),

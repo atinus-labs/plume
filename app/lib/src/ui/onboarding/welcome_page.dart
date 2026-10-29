@@ -2,7 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:plume_design/plume_design.dart';
 
-import '../../state/services.dart';
+import '../../services/window_frame.dart';
+import '../../state/settings.dart';
 import '../common/logo.dart';
 import '../shell/title_bar.dart';
 import 'add_account.dart';
@@ -15,12 +16,11 @@ class WelcomePage extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final theme = Theme.of(context);
     final surfaces = PlumeSurfaces.of(context);
-    final desktop = ref.watch(desktopProvider);
     return Scaffold(
       backgroundColor: surfaces.window,
       body: Column(
         children: [
-          if (desktop.drawsWindowControls) const WindowTitleBar(),
+          if (ref.watch(titleBarProvider) == TitleBar.plume) const WindowTitleBar(),
           Expanded(
             child: Center(
               child: SingleChildScrollView(

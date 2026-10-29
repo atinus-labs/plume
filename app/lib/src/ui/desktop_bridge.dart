@@ -233,9 +233,8 @@ class _DesktopBridgeState extends ConsumerState<DesktopBridge> {
   @override
   Widget build(BuildContext context) {
     // Tray badge: unread conversations in the (primary) unified inbox.
-    final categories = ref.watch(hasCategoriesProvider) && ref.watch(settingsProvider).categoryTabs;
     ref.listen(
-      unreadCountProvider(RoleFilter(MailboxRole.inbox, category: categories ? MailCategory.primary : null)),
+      unreadCountProvider(RoleFilter(MailboxRole.inbox, category: ref.watch(inboxCategoryProvider))),
       (_, next) {
         final count = next.value;
         if (count != null) unawaited(_desktop.setUnreadCount(count));

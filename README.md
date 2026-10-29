@@ -25,6 +25,7 @@ A fast mail client for the Linux desktop, built with Flutter and Material 3 Expr
 - Gmail-style keyboard shortcuts
 - Opens `mailto:` links as the system's default mail app
 - Follows the desktop's light/dark mode and accent colour
+- Draws its own title bar, with minimise, maximise and close buttons where your desktop puts them (`gtk-decoration-layout`): drag it to move the window, double-click to maximise, right-click for the window menu. *Settings → Appearance → Title bar* switches to the desktop's title bar, or to none (the default on tiling compositors)
 
 ## Install
 

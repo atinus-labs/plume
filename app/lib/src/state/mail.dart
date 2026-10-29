@@ -3,6 +3,7 @@ import 'package:plume_core/plume_core.dart';
 
 import 'navigation.dart';
 import 'services.dart';
+import 'settings.dart';
 
 /// Identifies one message across accounts.
 typedef MessageKey = ({String accountId, String messageId});
@@ -95,3 +96,8 @@ final hasCategoriesProvider = Provider<bool>((ref) {
   final mailboxes = ref.watch(mailboxesProvider(null)).value ?? const [];
   return mailboxes.any((m) => m.role == MailboxRole.category);
 });
+
+/// The inbox tab the navigation opens: Primary while the category tabs
+/// show, otherwise the whole inbox.
+final inboxCategoryProvider = Provider<MailCategory?>((ref) =>
+    ref.watch(hasCategoriesProvider) && ref.watch(settingsProvider).categoryTabs ? MailCategory.primary : null);

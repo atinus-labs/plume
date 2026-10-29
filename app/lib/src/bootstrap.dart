@@ -42,6 +42,7 @@ Future<Services> bootstrap(List<String> args) async {
   final DesktopIntegration desktop = createDesktopIntegration(startHidden: args.contains('--background'));
   await desktop.start();
   await desktop.setPreventClose(settings.runInBackground && desktop.hasTray);
+  if (desktop.windowFrame case final frame?) await frame.apply(settings.titleBar ?? frame.defaultStyle);
   await engine.start();
   if (AppConfig.demo && (await store.accounts()).isEmpty && Platform.environment['PLUME_DEMO_AUTOADD'] == '1') {
     await accounts.add('demo');

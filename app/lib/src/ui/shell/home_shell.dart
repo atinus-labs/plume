@@ -7,6 +7,7 @@ import 'package:material_symbols_icons/symbols.dart';
 import 'package:plume_core/plume_core.dart';
 import 'package:plume_design/plume_design.dart';
 
+import '../../services/window_frame.dart';
 import '../../state/mail.dart';
 import '../../state/navigation.dart';
 import '../../state/services.dart';
@@ -67,7 +68,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
 
   @override
   Widget build(BuildContext context) {
-    final desktop = ref.watch(desktopProvider);
+    final titleBar = ref.watch(titleBarProvider);
     final settings = ref.watch(settingsProvider);
     final surfaces = PlumeSurfaces.of(context);
     // Only whether one is open: moving between conversations leaves the
@@ -89,12 +90,12 @@ class _HomeShellState extends ConsumerState<HomeShell> {
           children: [
             Column(
               children: [
-                if (desktop.drawsWindowControls) const WindowTitleBar(),
+                if (titleBar == TitleBar.plume) const WindowTitleBar(),
                 const StatusBanner(),
                 Expanded(
                   child: LayoutBuilder(builder: (context, constraints) {
                     final cls = WindowClass.of(constraints.maxWidth);
-                    final top = desktop.drawsWindowControls ? 0.0 : 8.0;
+                    final top = titleBar == TitleBar.plume ? 0.0 : 8.0;
                     if (cls >= WindowClass.expanded) {
                       final railExpanded = settings.railExpanded && constraints.maxWidth >= 1180;
                       final maxList = (constraints.maxWidth - (railExpanded ? 272 : 88) - 380).clamp(320.0, 640.0);

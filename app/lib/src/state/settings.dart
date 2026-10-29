@@ -4,6 +4,7 @@ import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../services/window_frame.dart';
 import 'services.dart';
 
 /// Where the theme colour comes from.
@@ -46,6 +47,7 @@ final class AppSettings {
     this.showSenderAvatars = true,
     this.fetchDomainFavicons = true,
     this.enableGravatar = false,
+    this.titleBar,
   });
 
   final ThemeMode themeMode;
@@ -89,6 +91,10 @@ final class AppSettings {
   /// Whether to query Gravatar (SHA-256) for sender and account avatars.
   final bool enableGravatar;
 
+  /// The title bar the user picked (Linux). Null until they pick one, which
+  /// leaves it to the desktop; see [titleBarProvider].
+  final TitleBar? titleBar;
+
   bool get mailListOnRight => mailListPosition == MailListPosition.right;
 
   Duration get foregroundSyncInterval => Duration(minutes: foregroundSyncMinutes);
@@ -116,6 +122,7 @@ final class AppSettings {
     bool? showSenderAvatars,
     bool? fetchDomainFavicons,
     bool? enableGravatar,
+    TitleBar? titleBar,
   }) =>
       AppSettings(
         themeMode: themeMode ?? this.themeMode,
@@ -141,6 +148,7 @@ final class AppSettings {
         showSenderAvatars: showSenderAvatars ?? this.showSenderAvatars,
         fetchDomainFavicons: fetchDomainFavicons ?? this.fetchDomainFavicons,
         enableGravatar: enableGravatar ?? this.enableGravatar,
+        titleBar: titleBar ?? this.titleBar,
       );
 
   Map<String, Object?> toJson() => {
@@ -164,6 +172,7 @@ final class AppSettings {
         'showSenderAvatars': showSenderAvatars,
         'fetchDomainFavicons': fetchDomainFavicons,
         'enableGravatar': enableGravatar,
+        'titleBar': titleBar?.name,
       };
 
   static AppSettings fromJson(Map<String, Object?> j) {
@@ -195,9 +204,18 @@ final class AppSettings {
       showSenderAvatars: j['showSenderAvatars'] as bool? ?? d.showSenderAvatars,
       fetchDomainFavicons: j['fetchDomainFavicons'] as bool? ?? d.fetchDomainFavicons,
       enableGravatar: j['enableGravatar'] as bool? ?? d.enableGravatar,
+      titleBar: TitleBar.values.asNameMap()[j['titleBar']],
     );
   }
 }
+
+/// The window's title bar: the user's pick, or the desktop's default. Always
+/// [TitleBar.none] where Plume doesn't decorate its window.
+final titleBarProvider = Provider<TitleBar>((ref) {
+  final frame = ref.watch(desktopProvider).windowFrame;
+  if (frame == null) return TitleBar.none;
+  return ref.watch(settingsProvider.select((s) => s.titleBar)) ?? frame.defaultStyle;
+});
 
 /// App settings, persisted in the store's settings table.
 final settingsProvider = NotifierProvider<SettingsNotifier, AppSettings>(SettingsNotifier.new);

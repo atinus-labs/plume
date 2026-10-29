@@ -11,6 +11,7 @@ import 'package:plume_linux/plume_linux.dart';
 import '../../config.dart';
 import '../../services/avatar_renderer.dart';
 import '../../services/desktop.dart';
+import '../../services/window_frame.dart';
 import 'window_channel.dart';
 
 final _log = Logger('plume.linux');
@@ -26,6 +27,7 @@ final class LinuxDesktop implements DesktopIntegration {
 
   final _env = DesktopEnvironment.current();
   late final _window = LinuxWindow(environment: _env);
+  late final _frame = _LinuxWindowFrame(_window, tiling: _env.isTilingCompositor);
   final _notifications = DesktopNotifications(appName: AppConfig.appName, desktopEntry: AppConfig.appId);
   final _tray = StatusNotifierTray();
   final _portal = PortalAppearance();
@@ -52,7 +54,7 @@ final class LinuxDesktop implements DesktopIntegration {
   Stream<DesktopEvent> get events => _events.stream;
 
   @override
-  bool get drawsWindowControls => !_env.isTilingCompositor;
+  WindowFrame get windowFrame => _frame;
 
   @override
   bool get hasTray => _trayRegistered;
@@ -76,10 +78,14 @@ final class LinuxDesktop implements DesktopIntegration {
           _events.add(OpenUriEvent(uri));
         }
       }))
-      ..add(_window.stateChanged.listen((s) => _events.add(
-          WindowStateEvent(visible: s.visible, focused: s.focused, maximized: s.maximized))));
+      ..add(_window.stateChanged.listen((s) {
+        _events.add(WindowStateEvent(visible: s.visible, focused: s.focused, maximized: s.maximized));
+        _frame._update(maximized: s.maximized);
+      }))
+      ..add(_window.decorationLayoutChanged.listen((layout) => _frame._update(layout: layout)));
 
     await Future.wait([
+      _window.decorationLayout().then((layout) => _frame._update(layout: layout)),
       _startNotifications(),
       _startPortal(),
       _startTray(),
@@ -313,12 +319,6 @@ final class LinuxDesktop implements DesktopIntegration {
   @override
   Future<bool> isWindowVisible() => _window.isVisible();
   @override
-  Future<void> minimize() => _window.minimize();
-  @override
-  Future<void> toggleMaximize() => _window.toggleMaximize();
-  @override
-  Future<void> startWindowMove() => _window.startMove();
-  @override
   Future<void> setPreventClose(bool prevent) => _window.setPreventClose(prevent);
 
   @override
@@ -461,6 +461,63 @@ final class LinuxDesktop implements DesktopIntegration {
       _notifications.dispose().catchError((_) {}),
     ]).timeout(const Duration(seconds: 2), onTimeout: () => const []);
   }
+}
+
+/// [WindowFrame] over the GTK runner's window channel. [LinuxDesktop] feeds
+/// it the window's state.
+final class _LinuxWindowFrame extends WindowFrame {
+  _LinuxWindowFrame(this._window, {required bool tiling}) : defaultStyle = tiling ? TitleBar.none : TitleBar.plume;
+
+  final LinuxWindow _window;
+
+  @override
+  final TitleBar defaultStyle;
+
+  bool _maximized = false;
+  var _buttons = parseDecorationLayout('');
+
+  @override
+  bool get maximized => _maximized;
+  @override
+  List<WindowButton> get leading => _buttons.$1;
+  @override
+  List<WindowButton> get trailing => _buttons.$2;
+
+  @override
+  Future<void> apply(TitleBar style) => _window.setSystemTitleBar(style == TitleBar.system);
+  @override
+  Future<void> startMove() => _window.startMove();
+  @override
+  Future<void> showMenu() => _window.showWindowMenu();
+  @override
+  Future<void> minimize() => _window.minimize();
+  @override
+  Future<void> toggleMaximize() => _window.toggleMaximize();
+
+  void _update({bool? maximized, String? layout}) {
+    final buttons = layout == null ? _buttons : parseDecorationLayout(layout);
+    if ((maximized ?? _maximized) == _maximized &&
+        listEquals(buttons.$1, _buttons.$1) &&
+        listEquals(buttons.$2, _buttons.$2)) {
+      return;
+    }
+    _maximized = maximized ?? _maximized;
+    _buttons = buttons;
+    notifyListeners();
+  }
+}
+
+/// Splits a GTK decoration layout such as `icon:minimize,maximize,close` into
+/// the window buttons before the title and those after it. Entries Plume has
+/// no button for (icon, menu, appmenu, spacer) are skipped; an empty layout
+/// is GTK's default.
+@visibleForTesting
+(List<WindowButton>, List<WindowButton>) parseDecorationLayout(String layout) {
+  List<WindowButton> side(String names) => [
+        for (final name in names.split(',')) ?WindowButton.values.asNameMap()[name.trim()],
+      ];
+  final sides = (layout.trim().isEmpty ? 'menu:minimize,maximize,close' : layout).split(':');
+  return (side(sides.first), sides.length > 1 ? side(sides[1]) : const []);
 }
 
 /// Whether the Linux integration should be used (not under `flutter test`).

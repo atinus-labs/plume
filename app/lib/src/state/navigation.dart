@@ -13,7 +13,8 @@ enum ViewKind { inbox, starred, sent, drafts, archive, allMail, junk, trash, lab
 /// A message list: a kind, optionally scoped to one account.
 @immutable
 final class MailView {
-  const MailView(this.kind, {this.accountId, this.mailboxId, this.category});
+  const MailView(this.kind, {this.accountId, this.mailboxId, this.category})
+      : assert(kind != ViewKind.label || (accountId != null && mailboxId != null), 'A label belongs to one account');
 
   static const unifiedInbox = MailView(ViewKind.inbox);
 
@@ -31,8 +32,14 @@ final class MailView {
   MailView withCategory(MailCategory? category) =>
       MailView(kind, accountId: accountId, mailboxId: mailboxId, category: category);
 
-  MailView forAccount(String? accountId) =>
-      MailView(kind, accountId: accountId, mailboxId: kind == ViewKind.label ? mailboxId : null, category: category);
+  /// This list for another account, or across all accounts when null. A
+  /// label belongs to one account, so leaving it opens the inbox instead,
+  /// on [inboxCategory].
+  MailView forAccount(String? accountId, {MailCategory? inboxCategory}) {
+    if (accountId == this.accountId) return this;
+    if (kind == ViewKind.label) return MailView(ViewKind.inbox, accountId: accountId, category: inboxCategory);
+    return MailView(kind, accountId: accountId, category: category);
+  }
 
   ThreadFilter toFilter() {
     final accounts = accountId == null ? null : {accountId!};

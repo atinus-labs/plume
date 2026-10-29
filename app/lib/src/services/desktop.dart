@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:ui';
 
+import 'window_frame.dart';
+
 /// Events coming from the desktop shell (tray, notifications, launcher).
 sealed class DesktopEvent {
   const DesktopEvent();
@@ -142,8 +144,9 @@ abstract interface class DesktopIntegration {
 
   Stream<DesktopEvent> get events;
 
-  /// Whether the app should draw its own minimise/maximise/close buttons.
-  bool get drawsWindowControls;
+  /// The window's title bar and buttons, where Plume decorates its own
+  /// window (Linux). Null elsewhere: the window has no title bar from Plume.
+  WindowFrame? get windowFrame;
 
   /// Whether a tray icon is shown (so closing can safely hide the window).
   bool get hasTray;
@@ -157,9 +160,6 @@ abstract interface class DesktopIntegration {
   Future<void> showWindow({String? activationToken});
   Future<void> hideWindow();
   Future<bool> isWindowVisible();
-  Future<void> minimize();
-  Future<void> toggleMaximize();
-  Future<void> startWindowMove();
   Future<void> setPreventClose(bool prevent);
   Future<void> quit();
 
@@ -188,14 +188,17 @@ abstract interface class DesktopIntegration {
 /// No desktop shell: used on platforms without tray/notification support
 /// and in tests.
 final class HeadlessDesktop implements DesktopIntegration {
+  HeadlessDesktop({this.windowFrame});
+
   final _events = StreamController<DesktopEvent>.broadcast();
 
   @override
   Future<void> start() async {}
   @override
   Stream<DesktopEvent> get events => _events.stream;
+  /// Null but in tests: there's no window to decorate.
   @override
-  bool get drawsWindowControls => false;
+  final WindowFrame? windowFrame;
   @override
   bool get hasTray => false;
   @override
@@ -210,12 +213,6 @@ final class HeadlessDesktop implements DesktopIntegration {
   Future<void> hideWindow() async {}
   @override
   Future<bool> isWindowVisible() async => true;
-  @override
-  Future<void> minimize() async {}
-  @override
-  Future<void> toggleMaximize() async {}
-  @override
-  Future<void> startWindowMove() async {}
   @override
   Future<void> setPreventClose(bool prevent) async {}
   @override
