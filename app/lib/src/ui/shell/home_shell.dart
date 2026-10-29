@@ -12,6 +12,7 @@ import '../../state/services.dart';
 import '../../state/settings.dart';
 import '../actions.dart';
 import '../compose/compose_host.dart';
+import '../reader/mail_renderer.dart';
 import '../reader/reader_pane.dart';
 import '../search/search_field.dart';
 import '../settings/settings_page.dart';
@@ -31,6 +32,15 @@ class HomeShell extends ConsumerStatefulWidget {
 class _HomeShellState extends ConsumerState<HomeShell> {
   final _scaffold = GlobalKey<ScaffoldState>();
   final _focus = FocusNode(debugLabel: 'shell');
+
+  @override
+  void initState() {
+    super.initState();
+    // Start the mail renderer's web engine before the first message opens.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) ref.read(mailRendererProvider)?.warmUp();
+    });
+  }
 
   @override
   void dispose() {
