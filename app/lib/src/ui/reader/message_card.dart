@@ -16,6 +16,10 @@ import '../common/format.dart';
 import '../compose/compose_host.dart';
 import 'html_body.dart';
 
+/// The colour of a message card, which simple HTML mail is rendered on.
+Color messageCardColor(ColorScheme scheme) =>
+    scheme.brightness == Brightness.light ? scheme.surfaceContainerLow : scheme.surfaceContainer;
+
 /// One message in a conversation. Collapsed messages show a single line;
 /// expanding springs the body open.
 class MessageCard extends ConsumerStatefulWidget {
@@ -49,12 +53,10 @@ class _MessageCardState extends ConsumerState<MessageCard> {
     final m = widget.message;
     final from = m.from;
     final isMe = from?.email.toLowerCase() == widget.myEmail.toLowerCase();
-    final cardColor = scheme.brightness == Brightness.light ? scheme.surfaceContainerLow : scheme.surfaceContainer;
-
     return Padding(
       padding: const EdgeInsets.only(bottom: 3),
       child: Material(
-        color: cardColor,
+        color: messageCardColor(scheme),
         shape: RoundedRectangleBorder(borderRadius: groupedRadius(widget.index, widget.count, outer: Corners.extraLarge, inner: Corners.small)),
         clipBehavior: Clip.antiAlias,
         child: AnimatedSize(

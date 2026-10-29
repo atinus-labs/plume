@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -5,11 +7,17 @@ import 'package:flutter_widget_from_html_core/flutter_widget_from_html_core.dart
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:plume_core/plume_core.dart';
 import 'package:plume_design/plume_design.dart';
+import 'package:plume_mime/plume_mime.dart' show MailtoLink;
 import 'package:url_launcher/url_launcher.dart';
 
 import '../../state/mail.dart';
 import '../../state/services.dart';
 import '../../state/settings.dart';
+import '../compose/compose_host.dart';
+import 'mail_document.dart';
+import 'mail_renderer.dart';
+import 'message_card.dart' show messageCardColor;
+import 'rendered_mail.dart';
 
 /// Inline image bytes, by `accountId/messageId/contentId`.
 final _inlineImageProvider =
@@ -24,11 +32,12 @@ final _inlineImageProvider =
 
 /// Renders a message body.
 ///
-/// Simple mail adapts to the app theme. Designed HTML mail (newsletters,
-/// receipts) is rendered on a light "paper" sheet in both themes, because
-/// such mail hard-codes its colours and breaks when inverted. Remote images
-/// are blocked until the user allows them, since they reveal when a message
-/// was read.
+/// HTML mail is laid out by a browser engine ([MailRenderer]) so it looks
+/// as it does in other mail apps. Simple mail adapts to the app theme.
+/// Designed HTML mail (newsletters, receipts) is shown on its own page
+/// colour in both themes, because such mail hard-codes its colours and
+/// breaks when inverted. Remote images are blocked until the user allows
+/// them, since they reveal when a message was read.
 class MessageBodyView extends ConsumerStatefulWidget {
   const MessageBodyView({super.key, required this.message});
 
@@ -41,6 +50,13 @@ class MessageBodyView extends ConsumerStatefulWidget {
 class _MessageBodyViewState extends ConsumerState<MessageBodyView> {
   bool _showImagesOnce = false;
   bool _showQuoted = false;
+
+  /// Set when the engine failed on this message; it then falls back to the
+  /// Flutter renderer.
+  bool _engineFailed = false;
+
+  String? _remoteCheckedFor;
+  bool _hasRemote = false;
 
   @override
   Widget build(BuildContext context) {
@@ -82,6 +98,32 @@ class _MessageBodyViewState extends ConsumerState<MessageBodyView> {
 
     final split = _splitQuoted(html);
     final visibleHtml = _showQuoted || split.quoted == null ? html : split.main;
+    final renderer = ref.watch(mailRendererProvider);
+
+    if (renderer != null && renderer.available && !_engineFailed) {
+      if (_remoteCheckedFor != visibleHtml) {
+        _remoteCheckedFor = visibleHtml;
+        _hasRemote = buildMailDocument(visibleHtml, allowRemote: false).hasRemoteContent;
+      }
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          if (_hasRemote && !trusted)
+            _ImagesBanner(onShow: () => setState(() => _showImagesOnce = true), sender: sender),
+          _EngineBody(
+            renderer: renderer,
+            message: widget.message,
+            html: visibleHtml,
+            inlineParts: body.inlineParts,
+            allowRemote: trusted,
+            onOpenLink: _openLink,
+            onFailed: () => setState(() => _engineFailed = true),
+          ),
+          if (split.quoted != null) _QuotedToggle(shown: _showQuoted, onTap: _toggleQuoted),
+        ],
+      );
+    }
+
     final designed = _isDesigned(html);
     final hasRemote = _remoteImage.hasMatch(html);
 
@@ -109,11 +151,8 @@ class _MessageBodyViewState extends ConsumerState<MessageBodyView> {
       onTapUrl: (url) async {
         final uri = Uri.tryParse(url);
         if (uri == null) return false;
-        if (uri.scheme == 'mailto') {
-          await launchUrl(uri);
-          return true;
-        }
-        return launchUrl(uri, mode: LaunchMode.externalApplication);
+        _openLink(uri);
+        return true;
       },
     );
 
@@ -143,6 +182,21 @@ class _MessageBodyViewState extends ConsumerState<MessageBodyView> {
   }
 
   void _toggleQuoted() => setState(() => _showQuoted = !_showQuoted);
+
+  /// Opens a link from the message: `mailto:` in a new message here, web
+  /// links in the browser. Others (including the renderer's own scheme,
+  /// which relative links resolve to) are ignored.
+  void _openLink(Uri uri) {
+    switch (uri.scheme.toLowerCase()) {
+      case 'mailto':
+        final link = MailtoLink.tryParse(uri.toString());
+        if (link != null) ref.read(composeProvider.notifier).mailto(link);
+      case 'http' || 'https':
+        unawaited(launchUrl(uri, mode: LaunchMode.externalApplication));
+      case 'tel' || 'sms' || 'geo' || 'webcal':
+        unawaited(launchUrl(uri, mode: LaunchMode.externalApplication));
+    }
+  }
 
   Widget _resolveCid(String cid) {
     final info = widget.message.attachments.where((a) => a.contentId == cid).firstOrNull;
@@ -178,6 +232,238 @@ bool _isDesigned(String html) => _designMarkers.allMatches(html).length >= 2;
   }
   if (cut < 0) return (main: html, quoted: null);
   return (main: html.substring(0, cut), quoted: html.substring(cut));
+}
+
+/// HTML rendered by the [MailRenderer] at the available width, re-rendered
+/// when the width, theme or image setting changes (showing the previous
+/// rendering, scaled, until the new one is ready).
+class _EngineBody extends ConsumerStatefulWidget {
+  const _EngineBody({
+    required this.renderer,
+    required this.message,
+    required this.html,
+    required this.inlineParts,
+    required this.allowRemote,
+    required this.onOpenLink,
+    required this.onFailed,
+  });
+
+  final MailRenderer renderer;
+  final Message message;
+  final String html;
+  final Map<String, Uint8List> inlineParts;
+  final bool allowRemote;
+  final ValueChanged<Uri> onOpenLink;
+  final VoidCallback onFailed;
+
+  @override
+  ConsumerState<_EngineBody> createState() => _EngineBodyState();
+}
+
+/// Everything a rendering depends on.
+typedef _RenderParams = ({
+  String key,
+  String content,
+  double width,
+  double devicePixelRatio,
+  Color background,
+  Color text,
+  Color link,
+  double fontSize,
+});
+
+class _EngineBodyState extends ConsumerState<_EngineBody> {
+  MailRenderLease? _shownLease;
+  MailRendering? _shown;
+  String? _shownKey;
+  String? _shownContent;
+
+  MailRenderLease? _pendingLease;
+  String? _pendingKey;
+  Timer? _start;
+
+  /// Shows progress once the first rendering takes a moment.
+  bool _slow = false;
+  Timer? _slowTimer;
+
+  @override
+  void initState() {
+    super.initState();
+    _slowTimer = Timer(const Duration(milliseconds: 300), () {
+      if (mounted && _shown == null) setState(() => _slow = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _start?.cancel();
+    _slowTimer?.cancel();
+    _pendingLease?.release();
+    _shownLease?.release();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final dpr = MediaQuery.devicePixelRatioOf(context);
+    final m = widget.message;
+    return LayoutBuilder(builder: (context, constraints) {
+      final width = constraints.maxWidth.floorToDouble();
+      final background = messageCardColor(scheme);
+      final fontSize = theme.textTheme.bodyLarge?.fontSize ?? 16;
+      // What is rendered and how, apart from the width.
+      final content = [
+        m.accountId,
+        m.id,
+        widget.html.length,
+        widget.html.hashCode,
+        widget.allowRemote,
+        background.toARGB32(),
+        scheme.onSurface.toARGB32(),
+        scheme.primary.toARGB32(),
+        fontSize,
+      ].join('|');
+      _request((
+        key: '$content|$width|$dpr',
+        content: content,
+        width: width,
+        devicePixelRatio: dpr,
+        background: background,
+        text: scheme.onSurface,
+        link: scheme.primary,
+        fontSize: fontSize,
+      ));
+
+      final shown = _shown;
+      if (shown == null) {
+        return SizedBox(
+          height: 48,
+          child: _slow ? const Center(child: LoadingIndicator(size: 32)) : null,
+        );
+      }
+      final rendered = RenderedMail(rendering: shown, width: width, onOpenLink: widget.onOpenLink);
+      if (!shown.designed) return rendered;
+      return Container(
+        decoration: BoxDecoration(color: shown.background, borderRadius: Corners.all(Corners.large)),
+        foregroundDecoration: theme.brightness == Brightness.light
+            ? BoxDecoration(border: Border.all(color: scheme.outlineVariant), borderRadius: Corners.all(Corners.large))
+            : null,
+        clipBehavior: Clip.antiAlias,
+        child: rendered,
+      );
+    });
+  }
+
+  /// Starts rendering [p] unless it is shown or on its way. Called during
+  /// layout, so it only schedules work.
+  void _request(_RenderParams p) {
+    if (p.key == _pendingKey) return;
+    if (p.key == _shownKey) {
+      _cancelPending();
+      return;
+    }
+    _cancelPending();
+    _pendingKey = p.key;
+    // While a window is being resized, wait for the width to settle; the
+    // current rendering is scaled meanwhile.
+    final resizing = _shown != null && p.content == _shownContent;
+    _start = Timer(resizing ? const Duration(milliseconds: 150) : Duration.zero, () => _begin(p));
+  }
+
+  void _cancelPending() {
+    _start?.cancel();
+    _start = null;
+    _pendingLease?.release();
+    _pendingLease = null;
+    _pendingKey = null;
+  }
+
+  void _begin(_RenderParams p) {
+    if (!mounted || p.key != _pendingKey) return;
+    final lease = _pendingLease = widget.renderer.lease(p.key, () => _buildRequest(p));
+    lease.rendering.then((rendering) {
+      if (!mounted || !identical(lease, _pendingLease)) return;
+      setState(() {
+        _shownLease?.release();
+        _shownLease = lease;
+        _shown = rendering;
+        _shownKey = p.key;
+        _shownContent = p.content;
+        _pendingLease = null;
+        _pendingKey = null;
+      });
+    }, onError: (Object error) {
+      if (!mounted || !identical(lease, _pendingLease) || error is MailRenderCancelled) return;
+      _cancelPending();
+      widget.onFailed();
+    });
+  }
+
+  Future<MailRenderRequest> _buildRequest(_RenderParams p) async {
+    final document = buildMailDocument(
+      widget.html,
+      allowRemote: widget.allowRemote,
+      inlineParts: await _inlineParts(),
+    );
+    return MailRenderRequest(
+      html: document.html,
+      width: p.width,
+      devicePixelRatio: p.devicePixelRatio,
+      background: p.background,
+      text: p.text,
+      link: p.link,
+      fontSize: p.fontSize,
+      lineHeight: 1.55,
+    );
+  }
+
+  /// The parts the HTML references by Content-ID, downloading those the
+  /// provider did not return with the body.
+  Future<Map<String, InlinePart>> _inlineParts() async {
+    final ids = referencedContentIds(widget.html);
+    if (ids.isEmpty) return const {};
+    final m = widget.message;
+    final engine = ref.read(engineProvider);
+    final provided = {for (final e in widget.inlineParts.entries) normalizeContentId(e.key): e.value};
+    final parts = <String, InlinePart>{};
+    await Future.wait([
+      for (final id in ids)
+        () async {
+          final info = m.attachments
+              .where((a) => a.contentId != null && normalizeContentId(a.contentId!) == id)
+              .firstOrNull;
+          var bytes = provided[id];
+          if (bytes == null && info != null) {
+            try {
+              bytes = await engine.attachment(m.accountId, m.id, info);
+            } catch (_) {
+              // Shown as a missing image.
+            }
+          }
+          if (bytes != null) parts[id] = (mimeType: _imageType(info?.mimeType, bytes), bytes: bytes);
+        }(),
+    ]);
+    return parts;
+  }
+
+  static String _imageType(String? declared, Uint8List bytes) {
+    if (declared != null && declared.startsWith('image/')) return declared;
+    bool starts(List<int> magic) {
+      if (bytes.length < magic.length) return false;
+      for (var i = 0; i < magic.length; i++) {
+        if (bytes[i] != magic[i]) return false;
+      }
+      return true;
+    }
+
+    if (starts(const [0x89, 0x50, 0x4E, 0x47])) return 'image/png';
+    if (starts(const [0xFF, 0xD8, 0xFF])) return 'image/jpeg';
+    if (starts(const [0x47, 0x49, 0x46])) return 'image/gif';
+    if (bytes.length > 12 && String.fromCharCodes(bytes.sublist(8, 12)) == 'WEBP') return 'image/webp';
+    return declared ?? 'image/png';
+  }
 }
 
 class _MailWidgetFactory extends WidgetFactory {
@@ -248,16 +534,20 @@ class _ImagesBanner extends ConsumerWidget {
         shape: RoundedRectangleBorder(borderRadius: Corners.all(Corners.large)),
         child: Padding(
           padding: const EdgeInsets.fromLTRB(16, 8, 8, 8),
-          child: Row(
-            children: [
-              Icon(Symbols.hide_image_rounded, size: 20, color: scheme.onSurfaceVariant),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Text(
-                  'Images are hidden so the sender can’t tell you opened this.',
-                  style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+          child: LayoutBuilder(builder: (context, constraints) {
+            final message = Row(
+              children: [
+                Icon(Symbols.hide_image_rounded, size: 20, color: scheme.onSurfaceVariant),
+                const SizedBox(width: 12),
+                Expanded(
+                  child: Text(
+                    'Images are hidden so the sender can’t tell you opened this.',
+                    style: theme.textTheme.bodyMedium?.copyWith(color: scheme.onSurfaceVariant),
+                  ),
                 ),
-              ),
+              ],
+            );
+            final buttons = [
               TextButton(onPressed: onShow, child: const Text('Show images')),
               if (sender != null)
                 TextButton(
@@ -265,8 +555,19 @@ class _ImagesBanner extends ConsumerWidget {
                       (s) => s.copyWith(trustedImageSenders: {...s.trustedImageSenders, sender!})),
                   child: const Text('Always from sender'),
                 ),
-            ],
-          ),
+            ];
+            // Narrow panes put the buttons under the message.
+            if (constraints.maxWidth < 560) {
+              return Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Padding(padding: const EdgeInsets.symmetric(vertical: 4), child: message),
+                  Wrap(alignment: WrapAlignment.end, children: buttons),
+                ],
+              );
+            }
+            return Row(children: [Expanded(child: message), ...buttons]);
+          }),
         ),
       ),
     );

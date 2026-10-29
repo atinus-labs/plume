@@ -10,6 +10,7 @@
 #endif
 
 #include "flutter/generated_plugin_registrant.h"
+#include "mail_renderer.h"
 
 namespace {
 
@@ -46,6 +47,9 @@ struct _PlumeMainWindow {
 
   // The `plume/window` method channel.
   FlMethodChannel* channel;
+
+  // Renders HTML mail for the reader (`plume/mail_renderer`).
+  PlumeMailRenderer* mail_renderer;
 
   // TRUE until the window should be shown after the first frame. Set for
   // `--background` launches and when Dart hides the window before then.
@@ -576,6 +580,7 @@ static void plume_main_window_dispose(GObject* object) {
                                               nullptr);
   }
   g_clear_object(&self->channel);
+  g_clear_object(&self->mail_renderer);
   g_clear_pointer(&self->last_button_press, gdk_event_free);
   g_clear_pointer(&self->pending_token, g_free);
   g_clear_pointer(&self->pending_uris, g_ptr_array_unref);
@@ -650,6 +655,9 @@ PlumeMainWindow* plume_main_window_new(GtkApplication* application,
       kWindowChannel, FL_METHOD_CODEC(codec));
   fl_method_channel_set_method_call_handler(self->channel, method_call_cb,
                                             self, nullptr);
+  self->mail_renderer = plume_mail_renderer_new(
+      fl_engine_get_binary_messenger(fl_view_get_engine(self->view)),
+      fl_dart_project_get_assets_path(project));
 
   // Track button presses for startMove/startResize.
   self->button_press_signal_id =
