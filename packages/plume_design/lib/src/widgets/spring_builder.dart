@@ -1,6 +1,7 @@
 import 'package:flutter/widgets.dart';
 
 import '../motion.dart';
+import 'transitions.dart';
 
 /// Animates a double towards [value] with a spring, preserving velocity when
 /// the target changes mid-flight. This is the building block for the
@@ -29,7 +30,10 @@ class _SpringBuilderState extends State<SpringBuilder> with SingleTickerProvider
   @override
   void didUpdateWidget(SpringBuilder oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (widget.value != oldWidget.value) {
+    if (widget.value == oldWidget.value) return;
+    if (reduceMotion(context)) {
+      _controller.value = widget.value;
+    } else {
       _controller.animateWith(widget.spring.simulate(_controller.value, widget.value, velocity: _controller.velocity));
     }
   }

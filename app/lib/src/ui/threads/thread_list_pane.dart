@@ -32,6 +32,10 @@ class _ThreadListPaneState extends ConsumerState<ThreadListPane> {
   bool _loadingMore = false;
   bool _noMore = false;
   ThreadFilter? _lastFilter;
+  MailView? _lastView;
+
+  /// Where new content enters from after a view switch.
+  Offset _entrance = Offset.zero;
 
   @override
   void initState() {
@@ -68,6 +72,13 @@ class _ThreadListPaneState extends ConsumerState<ThreadListPane> {
       _lastFilter = filter;
       _noMore = false;
       if (_scroll.hasClients) _scroll.jumpTo(0);
+      final travel = _lastView == null ? null : viewTravel(_lastView!, view);
+      _entrance = switch (travel) {
+        (Axis.horizontal, final d) => Offset(28.0 * d, 0),
+        (Axis.vertical, final d) => Offset(0, 28.0 * d),
+        null => Offset.zero,
+      };
+      _lastView = view;
     }
     final threads = ref.watch(visibleThreadsProvider);
     final accounts = ref.watch(accountMapProvider);
@@ -90,33 +101,38 @@ class _ThreadListPaneState extends ConsumerState<ThreadListPane> {
               : const SizedBox(height: 24),
         ),
         Expanded(
-          child: threads.when(
-            loading: () => const Center(child: LoadingIndicator()),
-            error: (e, _) => EmptyState(icon: Symbols.error_rounded, title: 'Couldn’t load mail', message: '$e'),
-            data: (list) {
-              if (list.isEmpty) {
-                if (initialSync && !search.active) {
-                  return const EmptyState(
-                    icon: Symbols.downloading_rounded,
-                    shape: null,
-                    title: 'Setting up your inbox',
-                    message: 'Plume is downloading your recent mail. This only takes a moment the first time.',
-                    action: LoadingIndicator(),
-                  );
+          child: Entrance(
+            token: (filter, search.active),
+            offset: search.active ? Offset.zero : _entrance,
+            child: threads.when(
+              loading: () => const Center(child: LoadingIndicator()),
+              error: (e, _) => EmptyState(icon: Symbols.error_rounded, title: 'Couldn’t load mail', message: '$e'),
+              data: (list) {
+                if (list.isEmpty) {
+                  if (initialSync && !search.active) {
+                    return const EmptyState(
+                      icon: Symbols.downloading_rounded,
+                      shape: null,
+                      title: 'Setting up your inbox',
+                      message: 'Plume is downloading your recent mail. This only takes a moment the first time.',
+                      action: LoadingIndicator(),
+                    );
+                  }
+                  return _emptyFor(view, search);
                 }
-                return _emptyFor(view, search);
-              }
-              return _GroupedList(
-                threads: list,
-                accounts: accounts,
-                controller: _scroll,
-                unified: view.accountId == null && accounts.length > 1,
-                grouped: !search.active,
-                footer: _loadingMore
-                    ? const Padding(padding: EdgeInsets.all(16), child: Center(child: LoadingIndicator(size: 36)))
-                    : null,
-              );
-            },
+                return _GroupedList(
+                  threads: list,
+                  accounts: accounts,
+                  controller: _scroll,
+                  unified: view.accountId == null && accounts.length > 1,
+                  grouped: !search.active,
+                  resetKey: (filter, search.query, search.serverResults),
+                  footer: _loadingMore
+                      ? const Padding(padding: EdgeInsets.all(16), child: Center(child: LoadingIndicator(size: 36)))
+                      : null,
+                );
+              },
+            ),
           ),
         ),
       ],
@@ -174,6 +190,30 @@ String viewTitle(MailView view, List<Mailbox> mailboxes) => switch (view.kind) {
       ViewKind.trash => 'Trash',
       ViewKind.label => mailboxes.where((m) => m.id == view.mailboxId).firstOrNull?.name ?? 'Label',
     };
+
+const _categoryOrder = [
+  MailCategory.primary,
+  MailCategory.promotions,
+  MailCategory.social,
+  MailCategory.updates,
+  MailCategory.forums,
+  null,
+];
+
+/// How the list moves between two views, mirroring where they sit on
+/// screen: down or up the rail, or across the category tabs. Null when the
+/// views are unrelated (another account) and a plain fade fits.
+(Axis, int)? viewTravel(MailView from, MailView to) {
+  if (from == to) return null;
+  if (from.kind == to.kind && from.mailboxId == to.mailboxId) {
+    if (from.accountId != to.accountId) return null;
+    final d = _categoryOrder.indexOf(to.category).compareTo(_categoryOrder.indexOf(from.category));
+    return d == 0 ? null : (Axis.horizontal, d);
+  }
+  var d = to.kind.index.compareTo(from.kind.index);
+  if (d == 0) d = (to.mailboxId ?? '').compareTo(from.mailboxId ?? '');
+  return d == 0 ? null : (Axis.vertical, d);
+}
 
 /// Search, title and tabs, or the contextual selection toolbar.
 class _Header extends ConsumerWidget {
@@ -259,22 +299,33 @@ class _TitleRow extends ConsumerWidget {
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Flexible(
-                      child: Text(
-                        viewTitle(view, mailboxes),
-                        style: theme.textTheme.headlineMediumEmphasized,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                    Flexible(child: _ViewTitle(view: view, title: viewTitle(view, mailboxes))),
+                    AnimatedSwitcher(
+                      duration: Spring.spatialFast.duration,
+                      reverseDuration: Spring.effectsFast.duration,
+                      switchInCurve: Spring.spatialFast.curve,
+                      transitionBuilder: (child, a) => ScaleTransition(
+                        scale: a,
+                        alignment: Alignment.centerLeft,
+                        child: FadeTransition(opacity: a, child: child),
                       ),
+                      child: unread > 0
+                          ? Padding(
+                              key: const ValueKey('new'),
+                              padding: const EdgeInsets.only(left: 10),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+                                decoration:
+                                    BoxDecoration(color: theme.colorScheme.primary, borderRadius: Corners.all(Corners.full)),
+                                child: AnimatedCount(
+                                  unread,
+                                  format: (n) => '$n new',
+                                  style: theme.textTheme.labelMediumEmphasized.copyWith(color: theme.colorScheme.onPrimary),
+                                ),
+                              ),
+                            )
+                          : const SizedBox.shrink(key: ValueKey('none')),
                     ),
-                    if (unread > 0) ...[
-                      const SizedBox(width: 10),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                        decoration: BoxDecoration(color: theme.colorScheme.primary, borderRadius: Corners.all(Corners.full)),
-                        child: Text('$unread new', style: theme.textTheme.labelMediumEmphasized.copyWith(color: theme.colorScheme.onPrimary)),
-                      ),
-                    ],
                   ],
                 ),
               ),
@@ -297,6 +348,45 @@ class _TitleRow extends ConsumerWidget {
       ],
     );
   }
+}
+
+/// The view's name. Switching views slides it the way the rail moved.
+class _ViewTitle extends StatefulWidget {
+  const _ViewTitle({required this.view, required this.title});
+
+  final MailView view;
+  final String title;
+
+  @override
+  State<_ViewTitle> createState() => _ViewTitleState();
+}
+
+class _ViewTitleState extends State<_ViewTitle> {
+  int _direction = 1;
+
+  @override
+  void didUpdateWidget(_ViewTitle oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.title != oldWidget.title) {
+      final travel = viewTravel(oldWidget.view, widget.view);
+      _direction = travel?.$1 == Axis.vertical ? travel!.$2 : 1;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) => AnimatedSwitcher(
+        duration: kSwitchDuration,
+        transitionBuilder: sharedAxis(direction: _direction, distance: 18),
+        layoutBuilder: (current, previous) =>
+            Stack(alignment: Alignment.centerLeft, children: [...previous, ?current]),
+        child: Text(
+          widget.title,
+          key: ValueKey(widget.title),
+          style: Theme.of(context).textTheme.headlineMediumEmphasized,
+          maxLines: 1,
+          overflow: TextOverflow.ellipsis,
+        ),
+      );
 }
 
 class _SyncButton extends ConsumerStatefulWidget {
@@ -625,7 +715,7 @@ class _TabChip extends ConsumerWidget {
                     Container(
                       padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
                       decoration: BoxDecoration(color: scheme.primary, borderRadius: Corners.all(Corners.full)),
-                      child: Text('$unread', style: theme.textTheme.labelSmall?.copyWith(color: scheme.onPrimary)),
+                      child: AnimatedCount(unread, style: theme.textTheme.labelSmall?.copyWith(color: scheme.onPrimary)),
                     ),
                   ],
                 ],
@@ -672,7 +762,11 @@ class _SelectionBar extends ConsumerWidget {
                   onPressed: () => ref.read(selectionProvider.notifier).clear(),
                   icon: const Icon(Symbols.close_rounded),
                 ),
-                Text('$count selected', style: theme.textTheme.titleSmallEmphasized.copyWith(color: scheme.onPrimaryContainer)),
+                AnimatedCount(
+                  count,
+                  format: (n) => '$n selected',
+                  style: theme.textTheme.titleSmallEmphasized.copyWith(color: scheme.onPrimaryContainer),
+                ),
                 const Spacer(),
                 IconButton(
                   tooltip: 'Select all',
@@ -704,6 +798,11 @@ class _SelectionBar extends ConsumerWidget {
 }
 
 /// The list grouped into date sections of connected rows.
+///
+/// Rows that leave (archived, deleted, moved) stay a moment to fade and
+/// collapse, so the gap visibly closes; rows that arrive open up a gap and
+/// fade in. Wholesale changes (another view, a search, a page of older mail)
+/// swap without per-row motion.
 class _GroupedList extends StatefulWidget {
   const _GroupedList({
     required this.threads,
@@ -711,6 +810,7 @@ class _GroupedList extends StatefulWidget {
     required this.controller,
     required this.unified,
     required this.grouped,
+    required this.resetKey,
     this.footer,
   });
 
@@ -719,6 +819,9 @@ class _GroupedList extends StatefulWidget {
   final ScrollController controller;
   final bool unified;
   final bool grouped;
+
+  /// Changes when the list is replaced rather than edited.
+  final Object resetKey;
   final Widget? footer;
 
   @override
@@ -727,6 +830,15 @@ class _GroupedList extends StatefulWidget {
 
 class _GroupedListState extends State<_GroupedList> {
   late final ValueNotifier<({double top, double bottom})> _factors;
+
+  /// What is on screen: the current threads plus rows still animating out.
+  late List<ThreadSummary> _shown = widget.threads;
+  final _leaving = <String>{};
+  final _arriving = <String>{};
+  final _timers = <Timer>[];
+
+  /// Each row's last place in its group, so a leaving row keeps its corners.
+  final _lastPlace = <String, (int, int)>{};
 
   @override
   void initState() {
@@ -743,14 +855,75 @@ class _GroupedListState extends State<_GroupedList> {
       oldWidget.controller.removeListener(_onScroll);
       widget.controller.addListener(_onScroll);
     }
+    if (widget.resetKey != oldWidget.resetKey) {
+      _replace(widget.threads);
+    } else if (!identical(widget.threads, oldWidget.threads)) {
+      _merge(widget.threads);
+    }
     WidgetsBinding.instance.addPostFrameCallback((_) => _updateFromPosition());
   }
 
   @override
   void dispose() {
+    for (final t in _timers) {
+      t.cancel();
+    }
     widget.controller.removeListener(_onScroll);
     _factors.dispose();
     super.dispose();
+  }
+
+  void _replace(List<ThreadSummary> threads) {
+    _shown = threads;
+    _leaving.clear();
+    _arriving.clear();
+  }
+
+  void _merge(List<ThreadSummary> next) {
+    final nextKeys = {for (final t in next) t.key};
+    final live = {for (final t in _shown) if (!_leaving.contains(t.key)) t.key};
+    final removed = live.difference(nextKeys);
+    // A leaving row that comes back (undo) grows back in place.
+    _leaving.removeAll(nextKeys);
+    final added = nextKeys.difference(live).difference(_leaving);
+    // Many changes at once are a reload or a page of older mail, not
+    // something to point at.
+    if (removed.length > 50 || added.length > 5) return _replace(next);
+
+    _arriving.addAll(added);
+    _leaving.addAll(removed);
+    final result = [...next];
+    if (_leaving.isNotEmpty) {
+      // Keep leaving rows where they were: after the nearest row above them
+      // that is still on screen.
+      for (var i = 0; i < _shown.length; i++) {
+        final ghost = _shown[i];
+        if (!_leaving.contains(ghost.key)) continue;
+        var at = 0;
+        for (var j = i - 1; j >= 0 && at == 0; j--) {
+          final above = _shown[j].key;
+          final index = result.indexWhere((t) => t.key == above);
+          if (index >= 0) at = index + 1;
+        }
+        result.insert(at, ghost);
+      }
+    }
+    _shown = result;
+
+    if (removed.isNotEmpty) {
+      _timers.add(Timer(Presence.exitDuration + const Duration(milliseconds: 80), () {
+        if (!mounted) return;
+        setState(() {
+          final gone = removed.intersection(_leaving);
+          _leaving.removeAll(gone);
+          _shown = _shown.where((t) => !gone.contains(t.key)).toList();
+        });
+      }));
+    }
+    if (added.isNotEmpty) {
+      // Rows built later (scrolled into view) should not animate again.
+      _timers.add(Timer(Presence.exitDuration * 2, () => _arriving.removeAll(added)));
+    }
   }
 
   void _onScroll() {
@@ -772,27 +945,52 @@ class _GroupedListState extends State<_GroupedList> {
     }
   }
 
-  @override
-  Widget build(BuildContext context) {
-    final entries = <Object>[];
-    if (widget.grouped) {
-      String? current;
-      var groupStart = 0;
-      for (var i = 0; i < widget.threads.length; i++) {
-        final label = dateGroup(widget.threads[i].lastDate);
+  List<_Entry> _entries() {
+    final entries = <_Entry>[];
+    final labels = <String, int>{};
+    var groupStart = 0;
+
+    void closeGroup() {
+      final rows = entries.sublist(groupStart).cast<_RowEntry>();
+      final live = rows.where((r) => !_leaving.contains(r.thread.key)).toList();
+      for (var i = 0; i < live.length; i++) {
+        live[i]
+          ..index = i
+          ..size = live.length;
+        _lastPlace[live[i].thread.key] = (i, live.length);
+      }
+      for (final r in rows) {
+        if (!_leaving.contains(r.thread.key)) continue;
+        final (index, size) = _lastPlace[r.thread.key] ?? (0, 1);
+        r
+          ..index = index
+          ..size = size;
+      }
+      if (groupStart > 0) (entries[groupStart - 1] as _HeaderEntry).present = live.isNotEmpty;
+    }
+
+    String? current;
+    for (final thread in _shown) {
+      if (widget.grouped) {
+        final label = dateGroup(thread.lastDate);
         if (label != current) {
-          if (current != null) _closeGroup(entries, groupStart);
-          entries.add(label);
+          if (current != null) closeGroup();
+          final n = labels.update(label, (n) => n + 1, ifAbsent: () => 0);
+          entries.add(_HeaderEntry(label, ValueKey('h:$label:$n')));
           groupStart = entries.length;
           current = label;
         }
-        entries.add(widget.threads[i]);
       }
-      _closeGroup(entries, groupStart);
-    } else {
-      entries.addAll(widget.threads);
-      _closeGroup(entries, 0);
+      entries.add(_RowEntry(thread));
     }
+    closeGroup();
+    return entries;
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final entries = _entries();
+    final indexOf = <Key, int>{for (var i = 0; i < entries.length; i++) entries[i].key: i};
 
     final theme = Theme.of(context);
     return Scrollbar(
@@ -825,42 +1023,70 @@ class _GroupedListState extends State<_GroupedList> {
             );
           },
           child: ListView.builder(
+            key: const PageStorageKey('threads'),
             controller: widget.controller,
             clipBehavior: Clip.none,
             padding: const EdgeInsets.fromLTRB(8, 0, 8, 24),
             itemCount: entries.length + (widget.footer == null ? 0 : 1),
+            findChildIndexCallback: (key) => indexOf[key],
             itemBuilder: (context, i) {
               if (i == entries.length) return widget.footer!;
-              final entry = entries[i];
-              if (entry is String) {
-                return Padding(
-                  padding: EdgeInsets.fromLTRB(16, i == 0 ? 4 : 18, 16, 8),
-                  child: Text(entry, style: theme.textTheme.labelLargeEmphasized.copyWith(color: theme.colorScheme.primary)),
-                );
+              switch (entries[i]) {
+                case _HeaderEntry(:final key, :final label, :final present):
+                  return Presence(
+                    key: key,
+                    present: present,
+                    appear: present && _arriving.isNotEmpty,
+                    child: Padding(
+                      padding: EdgeInsets.fromLTRB(16, i == 0 ? 4 : 18, 16, 8),
+                      child: Text(label, style: theme.textTheme.labelLargeEmphasized.copyWith(color: theme.colorScheme.primary)),
+                    ),
+                  );
+                case _RowEntry(:final key, :final thread, :final index, :final size):
+                  return Presence(
+                    key: key,
+                    present: !_leaving.contains(thread.key),
+                    appear: _arriving.contains(thread.key),
+                    child: ThreadTile(
+                      thread: thread,
+                      index: index,
+                      groupSize: size,
+                      account: widget.accounts[thread.accountId],
+                      showAccountDot: widget.unified,
+                    ),
+                  );
               }
-              final item = entry as _Positioned;
-              return ThreadTile(
-                key: ValueKey(item.thread.key),
-                thread: item.thread,
-                index: item.index,
-                groupSize: item.size,
-                account: widget.accounts[item.thread.accountId],
-                showAccountDot: widget.unified,
-              );
             },
           ),
         ),
       ),
     );
   }
+}
 
-  /// Replaces the raw threads after [start] with positioned entries.
-  static void _closeGroup(List<Object> entries, int start) {
-    final size = entries.length - start;
-    for (var i = start; i < entries.length; i++) {
-      entries[i] = _Positioned(entries[i] as ThreadSummary, i - start, size);
-    }
-  }
+sealed class _Entry {
+  Key get key;
+}
+
+final class _HeaderEntry extends _Entry {
+  _HeaderEntry(this.label, this.key);
+
+  final String label;
+  @override
+  final Key key;
+
+  /// False once every row under it has left.
+  bool present = true;
+}
+
+final class _RowEntry extends _Entry {
+  _RowEntry(this.thread);
+
+  final ThreadSummary thread;
+  @override
+  late final Key key = ValueKey(thread.key);
+  int index = 0;
+  int size = 1;
 }
 
 Shader _createFadeShader(Rect bounds, double topFactor, double bottomFactor) {
@@ -938,12 +1164,4 @@ class _GroupedListClipper extends CustomClipper<Path> {
       horizontalInset != oldClipper.horizontalInset ||
       topFactor != oldClipper.topFactor ||
       bottomFactor != oldClipper.bottomFactor;
-}
-
-final class _Positioned {
-  const _Positioned(this.thread, this.index, this.size);
-
-  final ThreadSummary thread;
-  final int index;
-  final int size;
 }
