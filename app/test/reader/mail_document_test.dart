@@ -7,7 +7,7 @@ void main() {
   test('puts the content security policy first, after a doctype', () {
     final doc = buildMailDocument('<!DOCTYPE html><html><head></head><body>Hi</body></html>', allowRemote: false);
     expect(doc.html, startsWith('<!DOCTYPE html><meta http-equiv="Content-Security-Policy"'));
-    expect(doc.html, contains("img-src data: plume:;"));
+    expect(doc.html, contains('img-src data: plume:;'));
 
     final fragment = buildMailDocument('<p>Hi</p>', allowRemote: false);
     expect(fragment.html, startsWith('<meta http-equiv="Content-Security-Policy"'));
