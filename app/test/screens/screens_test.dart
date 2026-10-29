@@ -17,6 +17,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_quill/flutter_quill.dart' show ChangeSource, QuillEditor;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plume/src/services/window_frame.dart';
@@ -72,6 +73,18 @@ Future<void> _openServerForm(WidgetTester t, WidgetRef c) async {
 
 // Built-in providers only: the form must not look servers up on the network.
 Step _type(String field, String text) => (t, c) => t.enterText(find.widgetWithText(TextField, field), text);
+
+/// A body using every kind of formatting the composer offers.
+const _formattedBody = '<div>Hi Arjun,</div><div><br></div>'
+    '<div>Here is the plan for <b>Thursday</b>, see the <a href="https://example.com/doc">doc</a>:</div>'
+    '<ol><li>Freeze the <i>release</i> branch and tag the candidate once the last two fixes land</li>'
+    '<li><u>Run</u> the full suite<ol><li>Unit and integration</li><li>A canary on <span style="color:#1e8e3e">staging</span></li></ol></li>'
+    '<li>Ship</li></ol>'
+    '<ul><li>Ping support<ul><li>Draft the <span style="font-size:x-large">notes</span></li></ul></li></ul>'
+    '<blockquote style="margin:0 0 0 0.8ex;border-left:3px solid #ccc;padding-left:1ex">'
+    '<div>Make sure nothing ships on a Friday.</div></blockquote>'
+    '<blockquote style="margin:0 0 0 40px;border:none;padding:0"><div><span style="color:#d93025">Indented</span> aside</div></blockquote>'
+    '<div><s>Old step</s> Done.</div>';
 
 final _scenarios = <String, List<Step>>{
   'welcome': [],
@@ -156,25 +169,44 @@ final _scenarios = <String, List<Step>>{
         to: const [Address('arjun@northwind.dev', 'Arjun Mehta')],
         subject: 'Launch checklist',
         textBody: '',
-        htmlBody: '<div>Hi Arjun,</div><div><br></div>'
-            '<div>Here is the plan for <b>Thursday</b>, see the <a href="https://example.com/doc">doc</a>:</div>'
-            '<ol><li>Freeze the <i>release</i> branch</li><li><u>Run</u> the full suite</li></ol>'
-            '<ul><li>Ping support</li></ul><div><s>Old step</s> Done.</div>',
+        htmlBody: _formattedBody,
       ));
     },
     // Select "Hi Arjun" and make it bold from the keyboard.
     (t, c) async {
-      final body = find.byWidgetPredicate((w) => w is TextField && w.controller is RichTextController);
+      final body = find.byType(QuillEditor);
       await t.tap(body);
-      final controller = (t.widget<TextField>(body).controller)!;
-      controller.selection = const TextSelection(baseOffset: 0, extentOffset: 8);
+      final controller = t.widget<QuillEditor>(body).controller;
+      controller.updateSelection(const TextSelection(baseOffset: 0, extentOffset: 8), ChangeSource.local);
       await t.sendKeyDownEvent(LogicalKeyboardKey.controlLeft);
       await t.sendKeyEvent(LogicalKeyboardKey.keyB);
       await t.sendKeyUpEvent(LogicalKeyboardKey.controlLeft);
       // Clicking a toolbar button keeps the selection in the body.
       await t.tap(find.byTooltip('Italic (Ctrl+I)'), kind: PointerDeviceKind.mouse);
       await t.pump();
-      expect((controller as RichTextController).toHtml(), startsWith('<div><b><i>Hi Arjun</i></b>,</div>'));
+      expect(controller.document.toMailHtml(), startsWith('<div><b><i>Hi Arjun</i></b>,</div>'));
+    },
+  ],
+  // The colour menu, opened on a word in a nested list item.
+  'compose_colors': [
+    (t, c) async => openThread(c, (c.read(visibleThreadsProvider).value!).first),
+    (t, c) async {
+      c.read(composeProvider.notifier).reopen(OutgoingMessage(
+        accountId: 'demo',
+        from: const Address('alex.rivera@example.com', 'Alex Rivera'),
+        to: const [Address('arjun@northwind.dev', 'Arjun Mehta')],
+        subject: 'Launch checklist',
+        textBody: '',
+        htmlBody: _formattedBody,
+      ));
+    },
+    (t, c) async {
+      final body = find.byType(QuillEditor);
+      await t.tap(body);
+      final controller = t.widget<QuillEditor>(body).controller;
+      final at = controller.document.toPlainText().indexOf('canary');
+      controller.updateSelection(TextSelection(baseOffset: at, extentOffset: at + 6), ChangeSource.local);
+      await t.tap(find.byTooltip('Text colour'), kind: PointerDeviceKind.mouse);
     },
   ],
   'add_account': [_openAddAccount],
@@ -236,6 +268,13 @@ const _sizes = {
   // Half of a tiled 1600px screen: one pane at a time beside the rail.
   'half': Size(800, 1000),
   'phone': Size(412, 900),
+};
+
+/// Steps run once a scenario is captured, before checking that nothing is
+/// still animating. An open menu keeps a frame callback registered to follow
+/// its anchor, so menus are closed first.
+final _afterCapture = <String, Step>{
+  'compose_colors': (t, c) async => t.tap(find.byTooltip('Text colour'), kind: PointerDeviceKind.mouse),
 };
 
 bool _sizeEnabled(String size) {
@@ -498,6 +537,10 @@ void main() {
           await h.settle();
           final image = await h.capture();
           await tester.runAsync(() => _writePng(image, 'build/screens/$sizeName/${entry.key}_${brightness.name}.png'));
+          if (_afterCapture[entry.key] case final step?) {
+            await step(tester, h.ref);
+            await h.settle();
+          }
           // Stillness: once settled, nothing may keep animating. On failure
           // the report shows where each running animation was started.
           SchedulerBinding.instance.debugAssertNoTransientCallbacks('Still animating after settling');

@@ -20,7 +20,7 @@ A fast mail client for the Linux desktop, built with Flutter and Material 3 Expr
 - Tray icon with unread count; closing the window keeps Plume running
 - HTML mail rendered by WebKit, as in other mail apps; simple mail follows the app's light or dark theme
 - Remote images blocked by default; tracking pixels removed
-- Compose with rich-text formatting, autocomplete, attachments, drafts, undo send and per-account signatures
+- Compose with rich-text formatting (text size and colour, nested lists, quotes and indents), autocomplete, attachments, drafts, undo send and per-account signatures
 - Instant local search, with server search on Enter
 - Gmail-style keyboard shortcuts
 - Opens `mailto:` links as the system's default mail app

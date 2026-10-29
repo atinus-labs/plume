@@ -6,6 +6,9 @@ import 'dart:convert';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter_quill/flutter_quill.dart'
+    // ignore: experimental_member_use
+    show QuillClipboardConfig, QuillController, QuillControllerConfig;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:material_symbols_icons/symbols.dart';
 import 'package:path/path.dart' as p;
@@ -17,7 +20,9 @@ import '../../state/services.dart';
 import '../../state/settings.dart';
 import '../actions.dart';
 import '../common/format.dart';
+import 'body_editor.dart';
 import 'compose_host.dart';
+import 'format_bar.dart';
 import 'recipient_field.dart';
 import 'rich_text.dart';
 
@@ -60,11 +65,26 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
   late bool _showCc =
       widget.request.cc.isNotEmpty || widget.request.bcc.isNotEmpty;
   late final _subject = TextEditingController(text: widget.request.subject);
-  late final _body = widget.request.html != null
-      ? RichTextController.fromHtml(widget.request.html!)
-      : RichTextController(text: widget.request.body);
-  final _bodyFocus = FocusNode();
   late bool _plainText = widget.request.plainText;
+
+  /// The formatted body, and the body in plain text mode.
+  late final _body = QuillController(
+    document: widget.request.html != null && !_plainText
+        ? documentFromHtml(widget.request.html!)
+        : documentFromText(_plainText ? null : widget.request.body),
+    selection: const TextSelection.collapsed(offset: 0),
+    // Formatting pasted from other apps is not read. On Linux reading it
+    // runs a bundled xclip, which Wayland sessions may not support.
+    config: const QuillControllerConfig(
+      // ignore: experimental_member_use
+      clipboardConfig: QuillClipboardConfig(enableExternalRichPaste: false),
+    ),
+  );
+  late final _plainBody = TextEditingController(
+    text: _plainText ? widget.request.body : '',
+  );
+  final _bodyFocus = FocusNode();
+  final _bodyScroll = ScrollController();
   bool _showFormatting = true;
   final _toKey = GlobalKey<RecipientFieldState>();
   final _ccKey = GlobalKey<RecipientFieldState>();
@@ -95,6 +115,7 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     super.initState();
     _subject.addListener(_scheduleSave);
     _body.addListener(_scheduleSave);
+    _plainBody.addListener(_scheduleSave);
     unawaited(_loadQuote());
     if (widget.request.forwardFrom != null)
       unawaited(_loadForwardedAttachments());
@@ -112,7 +133,9 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     _autosave?.cancel();
     _subject.dispose();
     _body.dispose();
+    _plainBody.dispose();
     _bodyFocus.dispose();
+    _bodyScroll.dispose();
     super.dispose();
   }
 
@@ -183,12 +206,15 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     );
   }
 
+  String get _bodyText =>
+      _plainText ? _plainBody.text : _body.document.toPlainText();
+
   bool get _isEmpty =>
       _to.isEmpty &&
       _cc.isEmpty &&
       _bcc.isEmpty &&
       _subject.text.trim().isEmpty &&
-      _body.text.trim().isEmpty &&
+      _bodyText.trim().isEmpty &&
       _attachments.isEmpty;
 
   Future<void> _saveDraft() async {
@@ -215,7 +241,7 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     final account = accounts[_accountId] ?? accounts.values.firstOrNull;
     if (account == null) return null;
     final quote = _quotedText;
-    final typed = _body.toPlainText();
+    final typed = _plainText ? _plainBody.text.trimRight() : _body.document.toMailText();
     final signature = account.signature?.trim();
     final textParts = [
       typed,
@@ -233,7 +259,7 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
       htmlBody: _plainText
           ? null
           : _toHtml(
-              _body.toHtml(),
+              _body.document.toMailHtml(),
               signature,
               quote,
               quoteIsForward: widget.request.mode == ComposeMode.forward,
@@ -260,7 +286,7 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     if (message.subject.isEmpty &&
         !await _confirm('Send without a subject?', 'Send'))
       return;
-    if (_mentionsAttachment(_body.text) &&
+    if (_mentionsAttachment(_bodyText) &&
         _attachments.isEmpty &&
         !await _confirm(
           'You mentioned an attachment, but nothing is attached. Send anyway?',
@@ -358,7 +384,7 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
   // Formatting -----------------------------------------------------------------
 
   /// Runs a formatting [action] on the body and returns focus to it.
-  void _format(void Function() action) {
+  void _format(VoidCallback action) {
     if (_plainText) return;
     action();
     _bodyFocus.requestFocus();
@@ -372,7 +398,10 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     final result = await showDialog<(String, String?)>(
       context: context,
       builder: (context) => _LinkDialog(
-        label: range.textInside(_body.text),
+        label: _body.document.getPlainText(
+          range.start,
+          range.end - range.start,
+        ),
         url: existing == null ? '' : _body.linkAt(existing.start) ?? '',
         canRemove: existing != null,
       ),
@@ -381,77 +410,26 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     _bodyFocus.requestFocus();
   }
 
+  /// Switches between formatted and plain text. Plain text keeps lists,
+  /// quotes and links as text and drops the rest of the formatting.
   Future<void> _togglePlainText() async {
     if (!_plainText &&
-        _body.hasFormatting &&
+        _body.document.hasFormatting &&
         !await _confirm(
           'Switching to plain text removes the formatting from this message.',
           'Switch',
         )) {
       return;
     }
-    setState(() => _plainText = !_plainText);
-    if (_plainText) _body.clearAllFormatting();
+    setState(() {
+      if (_plainText) {
+        _body.document = documentFromText(_plainBody.text);
+      } else {
+        _plainBody.text = _body.document.toMailText(marks: false);
+      }
+      _plainText = !_plainText;
+    });
     _scheduleSave();
-  }
-
-  Map<ShortcutActivator, VoidCallback> get _formatShortcuts {
-    if (_plainText) return const {};
-    void Function() style(int flag) =>
-        () => _body.toggle(flag);
-    void Function() list(ListKind kind) =>
-        () => _body.toggleList(kind);
-    return {
-      const SingleActivator(LogicalKeyboardKey.keyB, control: true): style(
-        InlineStyle.bold,
-      ),
-      const SingleActivator(LogicalKeyboardKey.keyI, control: true): style(
-        InlineStyle.italic,
-      ),
-      const SingleActivator(LogicalKeyboardKey.keyU, control: true): style(
-        InlineStyle.underline,
-      ),
-      const SingleActivator(
-        LogicalKeyboardKey.keyX,
-        control: true,
-        shift: true,
-      ): style(
-        InlineStyle.strike,
-      ),
-      const SingleActivator(LogicalKeyboardKey.keyK, control: true): () =>
-          unawaited(_editLink()),
-      // Shifted digits may arrive as the digit or as its symbol.
-      const SingleActivator(
-        LogicalKeyboardKey.digit7,
-        control: true,
-        shift: true,
-      ): list(
-        ListKind.numbered,
-      ),
-      const SingleActivator(
-        LogicalKeyboardKey.ampersand,
-        control: true,
-        shift: true,
-      ): list(
-        ListKind.numbered,
-      ),
-      const SingleActivator(
-        LogicalKeyboardKey.digit8,
-        control: true,
-        shift: true,
-      ): list(
-        ListKind.bullet,
-      ),
-      const SingleActivator(
-        LogicalKeyboardKey.asterisk,
-        control: true,
-        shift: true,
-      ): list(
-        ListKind.bullet,
-      ),
-      const SingleActivator(LogicalKeyboardKey.backslash, control: true):
-          _body.clearFormatting,
-    };
   }
 
   // UI -------------------------------------------------------------------------
@@ -655,15 +633,14 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
             child: ListView(
               padding: const EdgeInsets.fromLTRB(20, 8, 20, 12),
               children: [
-                CallbackShortcuts(
-                  bindings: _formatShortcuts,
-                  child: TextField(
-                    controller: _body,
+                if (_plainText)
+                  TextField(
+                    controller: _plainBody,
                     focusNode: _bodyFocus,
                     maxLines: null,
                     minLines: 8,
                     keyboardType: TextInputType.multiline,
-                    style: theme.textTheme.bodyLarge?.copyWith(height: 1.5),
+                    style: theme.textTheme.bodyLarge,
                     decoration: const InputDecoration(
                       hintText: 'Write your message',
                       filled: false,
@@ -672,8 +649,15 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
                       focusedBorder: InputBorder.none,
                       contentPadding: EdgeInsets.zero,
                     ),
+                  )
+                else
+                  BodyEditor(
+                    controller: _body,
+                    focusNode: _bodyFocus,
+                    scrollController: _bodyScroll,
+                    onEditLink: () => unawaited(_editLink()),
+                    minHeight: 8 * (theme.textTheme.bodyLarge?.fontSize ?? 16) * 1.5,
                   ),
-                ),
                 if (_quotedText != null) ...[
                   const SizedBox(height: 8),
                   Align(
@@ -751,7 +735,7 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
             ),
           ),
         if (_showFormatting && !_plainText)
-          _FormatBar(
+          FormatBar(
             controller: _body,
             onFormat: _format,
             onLink: () => unawaited(_editLink()),
@@ -908,140 +892,6 @@ class _TitleBar extends StatelessWidget {
                   const SizedBox(width: 6),
                 ],
               ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-/// Formatting buttons above the compose actions, like Gmail's formatting bar.
-class _FormatBar extends StatelessWidget {
-  const _FormatBar({
-    required this.controller,
-    required this.onFormat,
-    required this.onLink,
-  });
-
-  final RichTextController controller;
-  final void Function(void Function() action) onFormat;
-  final VoidCallback onLink;
-
-  @override
-  Widget build(BuildContext context) {
-    final scheme = Theme.of(context).colorScheme;
-    final selectedStyle = ButtonStyle(
-      backgroundColor: WidgetStateProperty.resolveWith(
-        (states) => states.contains(WidgetState.selected)
-            ? scheme.secondaryContainer
-            : null,
-      ),
-      foregroundColor: WidgetStateProperty.resolveWith(
-        (states) => states.contains(WidgetState.selected)
-            ? scheme.onSecondaryContainer
-            : scheme.onSurfaceVariant,
-      ),
-    );
-    Widget button(
-      IconData icon,
-      String tooltip,
-      bool selected,
-      VoidCallback onPressed,
-    ) => IconButton(
-      tooltip: tooltip,
-      isSelected: selected,
-      style: selectedStyle,
-      visualDensity: VisualDensity.compact,
-      iconSize: 20,
-      onPressed: onPressed,
-      icon: Icon(icon),
-    );
-    Widget gap() => SizedBox(
-      height: 20,
-      child: VerticalDivider(
-        width: 12,
-        color: scheme.outlineVariant.withValues(alpha: 0.6),
-      ),
-    );
-
-    // Clicking a button must not take the selection away from the body.
-    return TextFieldTapRegion(
-      child: Container(
-        alignment: Alignment.centerLeft,
-        padding: const EdgeInsets.fromLTRB(12, 2, 12, 0),
-        child: Material(
-          color: scheme.surfaceContainerHigh,
-          shape: const StadiumBorder(),
-          child: SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-            child: ListenableBuilder(
-              listenable: controller,
-              builder: (context, _) {
-                final list = controller.listKind();
-                Widget style(IconData icon, String tooltip, int flag) => button(
-                  icon,
-                  tooltip,
-                  controller.isActive(flag),
-                  () => onFormat(() => controller.toggle(flag)),
-                );
-                return Row(
-                  children: [
-                    style(
-                      Symbols.format_bold_rounded,
-                      'Bold (Ctrl+B)',
-                      InlineStyle.bold,
-                    ),
-                    style(
-                      Symbols.format_italic_rounded,
-                      'Italic (Ctrl+I)',
-                      InlineStyle.italic,
-                    ),
-                    style(
-                      Symbols.format_underlined_rounded,
-                      'Underline (Ctrl+U)',
-                      InlineStyle.underline,
-                    ),
-                    style(
-                      Symbols.strikethrough_s_rounded,
-                      'Strikethrough (Ctrl+Shift+X)',
-                      InlineStyle.strike,
-                    ),
-                    gap(),
-                    button(
-                      Symbols.link_rounded,
-                      'Insert link (Ctrl+K)',
-                      controller.linkRange() != null,
-                      onLink,
-                    ),
-                    gap(),
-                    button(
-                      Symbols.format_list_numbered_rounded,
-                      'Numbered list (Ctrl+Shift+7)',
-                      list == ListKind.numbered,
-                      () => onFormat(
-                        () => controller.toggleList(ListKind.numbered),
-                      ),
-                    ),
-                    button(
-                      Symbols.format_list_bulleted_rounded,
-                      'Bulleted list (Ctrl+Shift+8)',
-                      list == ListKind.bullet,
-                      () => onFormat(
-                        () => controller.toggleList(ListKind.bullet),
-                      ),
-                    ),
-                    gap(),
-                    button(
-                      Symbols.format_clear_rounded,
-                      'Remove formatting (Ctrl+\\)',
-                      false,
-                      () => onFormat(controller.clearFormatting),
-                    ),
-                  ],
-                );
-              },
             ),
           ),
         ),

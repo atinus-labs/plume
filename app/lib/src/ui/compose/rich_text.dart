@@ -1,446 +1,361 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
+import 'package:flutter_quill/flutter_quill.dart';
+import 'package:flutter_quill/quill_delta.dart';
 
-/// Inline text styles, as bit flags.
-abstract final class InlineStyle {
-  static const bold = 1;
-  static const italic = 2;
-  static const underline = 4;
-  static const strike = 8;
+/// Text sizes the composer offers, by their Quill `size` value. [scale] is
+/// against body text and [css] the keyword the size is sent as, so it follows
+/// the reader's own default size.
+enum TextSize {
+  small('small', 13 / 16, 'small', 'Small'),
+  normal(null, 1, null, 'Normal'),
+  large('large', 1.5, 'x-large', 'Large'),
+  huge('huge', 2, 'xx-large', 'Huge');
+
+  const TextSize(this.value, this.scale, this.css, this.label);
+
+  final String? value;
+  final double scale;
+  final String? css;
+  final String label;
+
+  static TextSize of(Object? value) => values.firstWhere((s) => s.value == value, orElse: () => normal);
 }
 
-enum ListKind { bullet, numbered }
+/// Text colours the composer offers. Mid tones, so text stays readable on
+/// the white most mail is read on and on the dark compose window.
+const textColors = <(String, Color)>[
+  ('Red', Color(0xFFD93025)),
+  ('Orange', Color(0xFFE8710A)),
+  ('Amber', Color(0xFFC88A00)),
+  ('Green', Color(0xFF1E8E3E)),
+  ('Teal', Color(0xFF00897B)),
+  ('Blue', Color(0xFF1A73E8)),
+  ('Indigo', Color(0xFF5C6BC0)),
+  ('Purple', Color(0xFF9334E6)),
+  ('Pink', Color(0xFFD01884)),
+  ('Grey', Color(0xFF80868B)),
+];
 
-const _bullet = '• ';
-final _numbered = RegExp(r'(\d{1,3})\. ');
+/// `#rrggbb` for [color], as Quill and HTML store it.
+String colorToHex(Color color) =>
+    '#${(color.toARGB32() & 0xFFFFFF).toRadixString(16).padLeft(6, '0')}';
 
-/// A text controller for the compose body that keeps formatting alongside
-/// the text, like the rich editors of other mail clients.
-///
-/// Inline styles and links are kept per character and follow edits. Lists are
-/// part of the text: a line starting with `• ` is a bulleted item and one
-/// starting with `1. ` a numbered item, so they stay readable in plain text.
-/// Enter continues a list, Enter on an empty item ends it, and Backspace
-/// after a marker removes it. Numbered items are renumbered as they change.
-class RichTextController extends TextEditingController {
-  RichTextController({super.text})
-      : _styles = List.filled(text?.length ?? 0, 0, growable: true),
-        _links = List.filled(text?.length ?? 0, null, growable: true);
+/// The colour of a stored `#rrggbb` value, or null for anything else.
+Color? colorFromHex(Object? value) {
+  if (value is! String || !RegExp(r'^#[0-9a-fA-F]{6}$').hasMatch(value)) return null;
+  return Color(0xFF000000 | int.parse(value.substring(1), radix: 16));
+}
 
-  /// A controller holding [html] as written by [toHtml] or another client.
-  /// Unsupported markup is reduced to its text.
-  factory RichTextController.fromHtml(String html) {
-    final parsed = _HtmlReader(html).read();
-    final c = RichTextController(text: parsed.text);
-    c._styles.setAll(0, parsed.styles);
-    c._links.setAll(0, parsed.links);
-    return c;
-  }
+/// Inline attributes "remove formatting" takes away.
+const _inlineKeys = ['bold', 'italic', 'underline', 'strike', 'link', 'color', 'size', 'background'];
 
-  final List<int> _styles;
-  final List<String?> _links;
+/// An empty body, or one holding [text] without formatting.
+Document documentFromText(String? text) {
+  final delta = Delta();
+  final t = text?.replaceAll('\r\n', '\n').trimRight() ?? '';
+  if (t.isNotEmpty) delta.insert(t);
+  delta.insert('\n');
+  return Document.fromDelta(delta);
+}
 
-  /// Style for the next typed text, set by toggling a style with no
-  /// selection. Cleared when the caret moves.
-  int? _pending;
+/// A body holding [html] as written by [MailDocument.toMailHtml] or another
+/// client. Unsupported markup is reduced to its text.
+Document documentFromHtml(String html) => Document.fromDelta(_HtmlReader(html).read());
 
-  // Editing --------------------------------------------------------------------
+/// A line of a document: runs of text with their inline attributes, and the
+/// line's own attributes (list, indent, quote).
+class _Line {
+  final runs = <(String, Map<String, dynamic>)>[];
+  Map<String, dynamic> attrs = const {};
 
-  @override
-  set value(TextEditingValue next) {
-    final old = text;
-    if (next.text == old) {
-      if (next.selection != selection) _pending = null;
-      super.value = next;
-      return;
-    }
-    final (start, end, inserted) = _diff(old, next);
+  bool get isBlank => runs.every((r) => r.$1.trim().isEmpty);
 
-    // Backspace just after a list marker removes the whole marker.
-    if (inserted.isEmpty && end - start == 1) {
-      final line = _lineStart(old, start);
-      final marker = _markerLength(old, line);
-      if (marker > 0 && end == line + marker) {
-        _edit([(line, end, '', 0, null)], selection: TextSelection.collapsed(offset: line));
-        return;
-      }
-    }
+  String? get list => switch (attrs['list']) {
+        'ordered' => 'ordered',
+        null => null,
+        _ => 'bullet',
+      };
+  int get indent => (attrs['indent'] as int?) ?? 0;
+  bool get quote => attrs['blockquote'] == true;
+}
 
-    final style = _pending ?? _styleBefore(start);
-    final link = _linkAround(start, end);
-    _styles.replaceRange(start, end, List.filled(inserted.length, style));
-    _links.replaceRange(start, end, List.filled(inserted.length, link));
-    _pending = null;
-    super.value = next;
-    if (inserted == '\n' && next.selection.isCollapsed) _continueList(start);
-    _renumber();
-  }
-
-  /// The replaced range and inserted text between [old] and [next]. A
-  /// collapsed caret marks where the edit ended, which settles repeated
-  /// characters ("a|a" + "a").
-  static (int, int, String) _diff(String old, TextEditingValue next) {
-    final n = next.text;
-    final sel = next.selection;
-    var suffix = -1;
-    if (sel.isValid && sel.isCollapsed && sel.baseOffset <= n.length) {
-      final tail = n.length - sel.baseOffset;
-      if (tail <= old.length && old.endsWith(n.substring(sel.baseOffset))) suffix = tail;
-    }
-    if (suffix < 0) {
-      suffix = 0;
-      final limit = old.length < n.length ? old.length : n.length;
-      while (suffix < limit && old.codeUnitAt(old.length - 1 - suffix) == n.codeUnitAt(n.length - 1 - suffix)) {
-        suffix++;
-      }
-    }
-    var prefix = 0;
-    final limit = (old.length < n.length ? old.length : n.length) - suffix;
-    while (prefix < limit && old.codeUnitAt(prefix) == n.codeUnitAt(prefix)) {
-      prefix++;
-    }
-    return (prefix, old.length - suffix, n.substring(prefix, n.length - suffix));
-  }
-
-  /// Applies replacements `(start, end, text, style, link)` that do not
-  /// overlap, moving the selection with the text.
-  void _edit(List<(int, int, String, int, String?)> ops, {TextSelection? selection}) {
-    if (ops.isEmpty) return;
-    ops.sort((a, b) => b.$1.compareTo(a.$1));
-    var s = text;
-    var base = this.selection.baseOffset;
-    var extent = this.selection.extentOffset;
-    int move(int o, int start, int end, int length) =>
-        o < start ? o : (o >= end ? o + length - (end - start) : start + length);
-    for (final (start, end, insert, style, link) in ops) {
-      s = s.replaceRange(start, end, insert);
-      _styles.replaceRange(start, end, List.filled(insert.length, style));
-      _links.replaceRange(start, end, List.filled(insert.length, link));
-      if (base >= 0) base = move(base, start, end, insert.length);
-      if (extent >= 0) extent = move(extent, start, end, insert.length);
-    }
-    super.value = TextEditingValue(
-      text: s,
-      selection: selection ?? TextSelection(baseOffset: base, extentOffset: extent),
-    );
-  }
-
-  /// After Enter at [newline] in a list item: starts the next item, or ends
-  /// the list when the item was empty.
-  void _continueList(int newline) {
-    final s = text;
-    final line = _lineStart(s, newline);
-    final marker = _markerLength(s, line);
-    if (marker == 0) return;
-    if (newline == line + marker) {
-      _edit([(line, newline + 1, '', 0, null)], selection: TextSelection.collapsed(offset: line));
-      return;
-    }
-    final number = _numbered.matchAsPrefix(s, line);
-    final next = number == null ? _bullet : '${int.parse(number[1]!) + 1}. ';
-    _edit([(newline + 1, newline + 1, next, _styles[newline], null)]);
-  }
-
-  /// Numbers each run of consecutive numbered items on from its first item.
-  void _renumber() {
-    final s = text;
-    final ops = <(int, int, String, int, String?)>[];
-    int? expected;
-    for (final (start, _) in _lines(s, s.length)) {
-      final m = _numbered.matchAsPrefix(s, start);
-      if (m == null) {
-        expected = null;
-        continue;
-      }
-      final n = int.parse(m[1]!);
-      if (expected != null && n != expected) {
-        ops.add((start, start + m[1]!.length, '$expected', _styles[start], null));
-      }
-      expected = (expected ?? n) + 1;
-    }
-    _edit(ops);
-  }
-
-  // Inline styles --------------------------------------------------------------
-
-  /// The style typing at [offset] takes: that of the character before it.
-  int _styleBefore(int offset) => offset > 0 ? _styles[offset - 1] : (_styles.isEmpty ? 0 : _styles[0]);
-
-  /// The link typing between [start] and [end] takes: only inside a link.
-  String? _linkAround(int start, int end) {
-    if (start == 0 || end >= _links.length) return null;
-    final link = _links[start - 1];
-    return link != null && _links[end] == link ? link : null;
-  }
-
-  /// Indices of text in [start, end), leaving out line breaks and list markers.
-  Iterable<int> _contentIn(int start, int end) sync* {
-    final s = text;
-    for (final (ls, le) in _lines(s, s.length, from: _lineStart(s, start))) {
-      if (ls >= end && ls > start) break;
-      final from = ls + _markerLength(s, ls);
-      for (var i = from < start ? start : from; i < le && i < end; i++) {
-        yield i;
-      }
-    }
-  }
-
-  /// Whether [flag] applies to the selection, or to typing at the caret.
-  bool isActive(int flag) {
-    final sel = selection;
-    if (!sel.isValid) return false;
-    if (sel.isCollapsed) return ((_pending ?? _styleBefore(sel.baseOffset)) & flag) != 0;
-    var any = false;
-    for (final i in _contentIn(sel.start, sel.end)) {
-      if (_styles[i] & flag == 0) return false;
-      any = true;
-    }
-    return any;
-  }
-
-  /// Turns [flag] on for the selection, or off when all of it has it. With
-  /// no selection it applies to what is typed next.
-  void toggle(int flag) {
-    final sel = selection;
-    if (!sel.isValid) return;
-    final on = !isActive(flag);
-    if (sel.isCollapsed) {
-      final current = _pending ?? _styleBefore(sel.baseOffset);
-      _pending = on ? current | flag : current & ~flag;
-    } else {
-      for (var i = sel.start; i < sel.end; i++) {
-        _styles[i] = on ? _styles[i] | flag : _styles[i] & ~flag;
-      }
-    }
-    notifyListeners();
-  }
-
-  /// Removes styles and links from the selection, or from typing at the caret.
-  void clearFormatting() {
-    final sel = selection;
-    if (!sel.isValid) return;
-    if (sel.isCollapsed) {
-      _pending = 0;
-    } else {
-      _styles.fillRange(sel.start, sel.end, 0);
-      _links.fillRange(sel.start, sel.end, null);
-    }
-    notifyListeners();
-  }
-
-  /// Removes all styles and links, as switching to plain text does.
-  void clearAllFormatting() {
-    _styles.fillRange(0, _styles.length, 0);
-    _links.fillRange(0, _links.length, null);
-    _pending = 0;
-    notifyListeners();
-  }
-
-  bool get hasFormatting => _styles.any((s) => s != 0) || _links.any((l) => l != null);
-
-  // Links ----------------------------------------------------------------------
-
-  /// The link around the caret, or the one covering the whole selection.
-  TextRange? linkRange() {
-    final sel = selection;
-    if (!sel.isValid) return null;
-    var at = sel.start;
-    if (sel.isCollapsed && (at >= _links.length || _links[at] == null) && at > 0) at--;
-    if (at >= _links.length) return null;
-    final link = _links[at];
-    if (link == null) return null;
-    var start = at, end = at;
-    while (start > 0 && _links[start - 1] == link) {
-      start--;
-    }
-    while (end < _links.length && _links[end] == link) {
-      end++;
-    }
-    if (sel.start < start || sel.end > end) return null;
-    return TextRange(start: start, end: end);
-  }
-
-  String? linkAt(int offset) => offset >= 0 && offset < _links.length ? _links[offset] : null;
-
-  /// Links [range] to [url] (none removes the link), replacing its text with
-  /// [label] if that differs. A collapsed range inserts [label] at the caret.
-  void setLink(TextRange range, String label, String? url) {
-    if (label.isEmpty) label = url ?? '';
-    if (range.textInside(text) == label) {
-      _links.fillRange(range.start, range.end, url);
-      notifyListeners();
-      return;
-    }
-    final style = range.isCollapsed ? (_pending ?? _styleBefore(range.start)) : _styles[range.start];
-    _edit([(range.start, range.end, label, style, url)],
-        selection: TextSelection.collapsed(offset: range.start + label.length));
-  }
-
-  // Lists ----------------------------------------------------------------------
-
-  /// The list kind of every line the selection touches, if they share one.
-  ListKind? listKind() {
-    final sel = selection;
-    if (!sel.isValid) return null;
-    ListKind? kind;
-    for (final line in _selectedLines()) {
-      final k = _kindAt(text, line);
-      if (k == null || (kind != null && k != kind)) return null;
-      kind = k;
-    }
-    return kind;
-  }
-
-  /// Makes the selected lines a [kind] list, or plain lines if they already are.
-  void toggleList(ListKind kind) {
-    if (!selection.isValid) return;
-    final s = text;
-    final marker = listKind() == kind ? '' : (kind == ListKind.bullet ? _bullet : '1. ');
-    final ops = <(int, int, String, int, String?)>[];
-    for (final line in _selectedLines()) {
-      final end = line + _markerLength(s, line);
-      // The marker takes the style of the item's text.
-      ops.add((line, end, marker, end < _styles.length ? _styles[end] : _styleBefore(line), null));
-    }
-    _edit(ops);
-    _renumber();
-  }
-
-  List<int> _selectedLines() {
-    final s = text;
-    final sel = selection;
-    // A selection ending at the start of a line leaves that line out.
-    final last = sel.end > sel.start && sel.end > 0 && s.codeUnitAt(sel.end - 1) == 0x0A ? sel.end - 1 : sel.end;
-    return [for (final (ls, _) in _lines(s, s.length, from: _lineStart(s, sel.start))) if (ls <= last) ls];
-  }
-
-  // Output ---------------------------------------------------------------------
-
-  @override
-  TextSpan buildTextSpan({required BuildContext context, TextStyle? style, required bool withComposing}) {
-    final scheme = Theme.of(context).colorScheme;
-    final s = text;
-    final composing = withComposing && value.isComposingRangeValid ? value.composing : TextRange.empty;
-    final children = <InlineSpan>[];
-    var start = 0;
-    for (var i = 1; i <= s.length; i++) {
-      if (i < s.length &&
-          _styles[i] == _styles[start] &&
-          _links[i] == _links[start] &&
-          i != composing.start &&
-          i != composing.end) {
-        continue;
-      }
-      final composed = start >= composing.start && start < composing.end;
-      children.add(TextSpan(text: s.substring(start, i), style: _spanStyle(_styles[start], _links[start], composed, scheme)));
-      start = i;
-    }
-    return TextSpan(style: style, children: children);
-  }
-
-  static TextStyle? _spanStyle(int flags, String? link, bool composing, ColorScheme scheme) {
-    if (flags == 0 && link == null && !composing) return null;
-    return TextStyle(
-      fontWeight: flags & InlineStyle.bold != 0 ? FontWeight.w700 : null,
-      fontStyle: flags & InlineStyle.italic != 0 ? FontStyle.italic : null,
-      color: link != null ? scheme.primary : null,
-      decoration: TextDecoration.combine([
-        if (flags & InlineStyle.underline != 0 || link != null || composing) TextDecoration.underline,
-        if (flags & InlineStyle.strike != 0) TextDecoration.lineThrough,
-      ]),
-    );
-  }
-
-  /// The text as HTML, one `<div>` per line and lists as `<ul>`/`<ol>`, the
-  /// way other clients' editors write it. Trailing blank lines are dropped.
-  String toHtml() {
-    final s = text;
-    if (s.trimRight().isEmpty) return '';
-    final out = StringBuffer();
-    ListKind? open;
-    for (final (start, end) in _lines(s, s.trimRight().length)) {
-      final marker = _markerLength(s, start);
-      final kind = _kindAt(s, start);
-      if (kind != open) {
-        if (open != null) out.write(open == ListKind.bullet ? '</ul>' : '</ol>');
-        if (kind == ListKind.bullet) out.write('<ul style="margin:0;padding-left:1.5em">');
-        if (kind == ListKind.numbered) {
-          final first = int.parse(_numbered.matchAsPrefix(s, start)![1]!);
-          out.write('<ol${first == 1 ? '' : ' start="$first"'} style="margin:0;padding-left:1.5em">');
+extension MailDocument on Document {
+  /// The lines up to the last one with text.
+  List<_Line> _lines() {
+    final lines = <_Line>[];
+    var line = _Line();
+    for (final op in toDelta().operations) {
+      final data = op.data;
+      if (data is! String) continue;
+      final attrs = op.attributes ?? const <String, dynamic>{};
+      final parts = data.split('\n');
+      for (var i = 0; i < parts.length; i++) {
+        if (parts[i].isNotEmpty) line.runs.add((parts[i], attrs));
+        if (i < parts.length - 1) {
+          line.attrs = attrs;
+          lines.add(line);
+          line = _Line();
         }
-        open = kind;
       }
-      final inline = _inlineHtml(start + marker, end);
-      final content = inline.isEmpty ? '<br>' : inline;
-      out.write(kind == null ? '<div>$content</div>' : '<li>$content</li>');
     }
-    if (open != null) out.write(open == ListKind.bullet ? '</ul>' : '</ol>');
+    if (line.runs.isNotEmpty) lines.add(line);
+    while (lines.isNotEmpty && lines.last.isBlank) {
+      lines.removeLast();
+    }
+    return lines;
+  }
+
+  bool get isBlank => _lines().isEmpty;
+
+  /// Whether any text or line is formatted.
+  bool get hasFormatting => toDelta().operations.any((op) => op.attributes?.isNotEmpty ?? false);
+
+  /// The body as HTML, one `<div>` per line, lists as nested `<ul>`/`<ol>`,
+  /// quotes as bordered `<blockquote>`s and indents as Gmail writes them.
+  /// Trailing blank lines are dropped.
+  String toMailHtml() {
+    final lines = _lines();
+    if (lines.isEmpty) return '';
+    final out = StringBuffer();
+    // Open containers, outermost first: 'ul', 'ol', 'quote' or 'indent',
+    // and whether a list's last item is still open.
+    final open = <(String, bool)>[];
+    void close(int keep) {
+      while (open.length > keep) {
+        final (kind, item) = open.removeLast();
+        if (item) out.write('</li>');
+        out.write(switch (kind) { 'ul' => '</ul>', 'ol' => '</ol>', _ => '</blockquote>' });
+      }
+    }
+
+    for (final line in lines) {
+      final list = line.list;
+      final path = <String>[];
+      if (list != null) {
+        // A nested item goes inside the open item one level up; with none,
+        // the list is indented instead.
+        for (var i = 0; i < line.indent; i++) {
+          final kind = i < open.length ? open[i].$1 : null;
+          path.add(kind == 'ul' || kind == 'ol' || kind == 'indent' ? kind! : 'indent');
+        }
+        path.add(list == 'ordered' ? 'ol' : 'ul');
+      } else {
+        if (line.quote) path.add('quote');
+        path.addAll(List.filled(line.indent, 'indent'));
+      }
+      var keep = 0;
+      while (keep < open.length && keep < path.length && open[keep].$1 == path[keep]) {
+        keep++;
+      }
+      close(keep);
+      for (var i = keep; i < path.length; i++) {
+        out.write(switch (path[i]) {
+          'ul' => '<ul style="margin:0;padding-left:1.5em;list-style-type:${const ['disc', 'circle', 'square'][i % 3]}">',
+          'ol' =>
+            '<ol style="margin:0;padding-left:1.5em;list-style-type:${const ['decimal', 'lower-alpha', 'lower-roman'][i % 3]}">',
+          'quote' => '<blockquote style="margin:0 0 0 0.8ex;border-left:3px solid #ccc;padding-left:1ex">',
+          _ => '<blockquote style="margin:0 0 0 40px;border:none;padding:0">',
+        });
+        open.add((path[i], false));
+      }
+      final inline = _inlineHtml(line.runs);
+      final content = inline.isEmpty ? '<br>' : inline;
+      if (list != null) {
+        if (open.last.$2) out.write('</li>');
+        out.write('<li>$content');
+        open.last = (open.last.$1, true);
+      } else {
+        out.write('<div>$content</div>');
+      }
+    }
+    close(0);
     return out.toString();
   }
 
-  String _inlineHtml(int start, int end) {
+  static String _inlineHtml(List<(String, Map<String, dynamic>)> runs) {
     final out = StringBuffer();
-    for (final (from, to) in _runs(start, end)) {
-      final flags = _styles[from];
-      final link = _links[from];
-      var t = _escape(text.substring(from, to)).replaceAll('  ', ' &nbsp;');
+    for (final (i, (text, a)) in runs.indexed) {
+      var t = _escape(text).replaceAll('  ', ' &nbsp;');
       // HTML drops spaces at the start of a line.
-      if (from == start && t.startsWith(' ')) t = '&nbsp;${t.substring(1)}';
+      if (i == 0 && t.startsWith(' ')) t = '&nbsp;${t.substring(1)}';
+      final link = a['link'] as String?;
       if (link == null) t = linkifyHtml(t);
-      if (flags & InlineStyle.strike != 0) t = '<s>$t</s>';
-      if (flags & InlineStyle.underline != 0) t = '<u>$t</u>';
-      if (flags & InlineStyle.italic != 0) t = '<i>$t</i>';
-      if (flags & InlineStyle.bold != 0) t = '<b>$t</b>';
+      if (a['strike'] == true) t = '<s>$t</s>';
+      if (a['underline'] == true) t = '<u>$t</u>';
+      if (a['italic'] == true) t = '<i>$t</i>';
+      if (a['bold'] == true) t = '<b>$t</b>';
+      final color = colorFromHex(a['color']);
+      final size = TextSize.of(a['size']).css;
+      final css = [if (color != null) 'color:${colorToHex(color)}', if (size != null) 'font-size:$size'];
+      if (css.isNotEmpty) t = '<span style="${css.join(';')}">$t</span>';
       if (link != null) t = '<a href="${const HtmlEscape(HtmlEscapeMode.attribute).convert(link)}">$t</a>';
       out.write(t);
     }
     return out.toString();
   }
 
-  /// The text for the `text/plain` alternative. Styles are written the way
-  /// mail clients read them in plain text (`*bold*`, `/italic/`,
-  /// `_underline_`), links as `text <url>`, and bullets as `-`.
-  String toPlainText() {
-    final s = text;
-    if (s.trimRight().isEmpty) return '';
-    final lines = <String>[];
-    for (final (start, end) in _lines(s, s.trimRight().length)) {
-      final out = StringBuffer();
-      var from = start;
-      if (s.startsWith(_bullet, start)) {
-        out.write('- ');
-        from += _bullet.length;
+  /// The body as plain text: lists with `-` and numbers, nested items and
+  /// indents led by spaces, quotes by `>`, and links as `text <url>`. With
+  /// [marks], styles are written the way mail clients read them in plain
+  /// text (`*bold*`, `/italic/`, `_underline_`), as the `text/plain`
+  /// alternative does.
+  String toMailText({bool marks = true}) {
+    final out = <String>[];
+    // The number reached at each level of the current numbered list.
+    final counts = <int>[];
+    for (final line in _lines()) {
+      final list = line.list;
+      if (list == null && line.isBlank) {
+        counts.clear();
+        out.add(line.quote ? '>' : '');
+        continue;
       }
-      for (final (a, b) in _runs(from, end)) {
-        var t = s.substring(a, b);
-        final link = _links[a];
-        final flags = _styles[a];
-        final core = t.trim();
-        if (core.isNotEmpty) {
-          var marked = core;
-          if (flags & InlineStyle.underline != 0) marked = '_${marked}_';
-          if (flags & InlineStyle.italic != 0) marked = '/$marked/';
-          if (flags & InlineStyle.bold != 0) marked = '*$marked*';
-          if (link != null && link != core && link != 'mailto:$core') marked = '$marked <$link>';
-          final lead = t.length - t.trimLeft().length;
-          t = '${t.substring(0, lead)}$marked${t.substring(lead + core.length)}';
+      final prefix = StringBuffer(line.quote ? '> ' : '');
+      final level = line.indent;
+      if (list == null) {
+        counts.clear();
+        prefix.write('    ' * level);
+      } else {
+        prefix.write('  ' * level);
+        if (list == 'ordered') {
+          if (counts.length > level + 1) counts.removeRange(level + 1, counts.length);
+          while (counts.length <= level) {
+            counts.add(0);
+          }
+          counts[level]++;
+          prefix.write('${listNumber(counts[level], level)}. ');
+        } else {
+          if (counts.length > level) counts.removeRange(level, counts.length);
+          prefix.write('- ');
         }
-        out.write(t);
       }
-      lines.add(out.toString());
+      for (final (text, a) in line.runs) {
+        final core = text.trim();
+        if (core.isEmpty) {
+          prefix.write(text);
+          continue;
+        }
+        var marked = core;
+        if (marks) {
+          if (a['underline'] == true) marked = '_${marked}_';
+          if (a['italic'] == true) marked = '/$marked/';
+          if (a['bold'] == true) marked = '*$marked*';
+        }
+        final link = a['link'] as String?;
+        if (link != null && link != core && link != 'mailto:$core') marked = '$marked <$link>';
+        final lead = text.length - text.trimLeft().length;
+        prefix.write('${text.substring(0, lead)}$marked${text.substring(lead + core.length)}');
+      }
+      out.add(prefix.toString());
     }
-    return lines.join('\n');
+    return out.join('\n');
+  }
+}
+
+/// The marker of item [n] of a numbered list nested [level] deep: `1`, then
+/// `a`, then `i`, as the editor and HTML number them.
+String listNumber(int n, int level) => switch (level % 3) {
+      1 => _letters(n),
+      2 => _roman(n),
+      _ => '$n',
+    };
+
+String _letters(int n) {
+  final out = StringBuffer();
+  while (n > 0) {
+    n--;
+    out.write(String.fromCharCode(97 + n % 26));
+    n ~/= 26;
+  }
+  return out.toString().split('').reversed.join();
+}
+
+String _roman(int n) {
+  const values = [1000, 900, 500, 400, 100, 90, 50, 40, 10, 9, 5, 4, 1];
+  const symbols = ['m', 'cm', 'd', 'cd', 'c', 'xc', 'l', 'xl', 'x', 'ix', 'v', 'iv', 'i'];
+  final out = StringBuffer();
+  for (var i = 0; i < values.length; i++) {
+    while (n >= values[i]) {
+      out.write(symbols[i]);
+      n -= values[i];
+    }
+  }
+  return out.toString();
+}
+
+/// Formatting commands on the compose body.
+extension Formatting on QuillController {
+  Map<String, Attribute<Object?>> get _style => getSelectionStyle().attributes;
+
+  /// Whether the inline or line [attribute] applies to the selection, or to
+  /// typing at the caret.
+  bool isActive(Attribute<Object?> attribute) {
+    final current = _style[attribute.key];
+    return current != null && current.value == attribute.value;
   }
 
-  /// Runs of [start, end) that share style and link.
-  Iterable<(int, int)> _runs(int start, int end) sync* {
-    var from = start;
-    for (var i = start + 1; i <= end; i++) {
-      if (i < end && _styles[i] == _styles[from] && _links[i] == _links[from]) continue;
-      if (from < end) yield (from, i);
-      from = i;
+  /// Turns [attribute] on for the selection, or off when all of it has it.
+  /// With no selection, inline styles apply to what is typed next.
+  void toggle(Attribute<Object?> attribute) =>
+      formatSelection(isActive(attribute) ? Attribute.clone(attribute, null) : attribute);
+
+  TextSize get textSize => TextSize.of(_style[Attribute.size.key]?.value);
+
+  void setTextSize(TextSize size) => formatSelection(SizeAttribute(size.value));
+
+  /// The colour of the selection, null for the default.
+  Color? get textColor => colorFromHex(_style[Attribute.color.key]?.value);
+
+  void setTextColor(Color? color) => formatSelection(ColorAttribute(color == null ? null : colorToHex(color)));
+
+  /// `bullet` or `ordered` when every selected line is in that list.
+  String? get listKind => switch (_style[Attribute.list.key]?.value) {
+        'bullet' => 'bullet',
+        'ordered' => 'ordered',
+        _ => null,
+      };
+
+  int get indentLevel => (_style[Attribute.indent.key]?.value as int?) ?? 0;
+
+  /// Removes text styles, colours, sizes and links from the selection, or
+  /// from typing at the caret. Lists, quotes and indents stay.
+  void clearFormatting() {
+    for (final key in _inlineKeys) {
+      formatSelection(Attribute.fromKeyValue(key, null));
     }
+  }
+
+  /// The link around the caret, or the one covering the whole selection.
+  TextRange? linkRange() {
+    if (!selection.isValid) return null;
+    var at = selection.start;
+    // At the end of a link, the caret is still on it.
+    if (selection.isCollapsed && linkAt(at) == null && at > 0) at--;
+    final leaf = document.querySegmentLeafNode(at).leaf;
+    if (leaf == null || linkAt(at) == null) return null;
+    final range = getLinkRange(leaf);
+    if (selection.start < range.start || selection.end > range.end) return null;
+    return range;
+  }
+
+  String? linkAt(int offset) =>
+      document.querySegmentLeafNode(offset).leaf?.style.attributes[Attribute.link.key]?.value as String?;
+
+  /// Links [range] to [url] (none removes the link), replacing its text with
+  /// [label] if that differs. A collapsed range inserts [label] at the caret.
+  void setLink(TextRange range, String label, String? url) {
+    if (label.isEmpty) label = url ?? '';
+    final current = document.getPlainText(range.start, range.end - range.start);
+    if (current != label) {
+      replaceText(range.start, range.end - range.start, label, null);
+    }
+    formatText(range.start, label.length, LinkAttribute(url));
+    // Typing on after the link does not extend it: Quill stops links at
+    // their text.
+    updateSelection(TextSelection.collapsed(offset: range.start + label.length), ChangeSource.local);
   }
 }
 
@@ -451,33 +366,6 @@ String _escape(String s) => const HtmlEscape(HtmlEscapeMode.element).convert(s);
 /// Makes bare web addresses in escaped HTML text clickable.
 String linkifyHtml(String escaped) => escaped.replaceAllMapped(
     RegExp(r'(https?://[^\s<>"]+[^\s<>".,;:!?)\]])'), (m) => '<a href="${m[1]}">${m[1]}</a>');
-
-/// `(start, end)` of each line of [s] up to [limit], from the line at [from].
-Iterable<(int, int)> _lines(String s, int limit, {int from = 0}) sync* {
-  var start = from;
-  while (true) {
-    final nl = s.indexOf('\n', start);
-    if (nl < 0 || nl >= limit) {
-      yield (start, limit < start ? start : limit);
-      return;
-    }
-    yield (start, nl);
-    start = nl + 1;
-  }
-}
-
-int _lineStart(String s, int offset) => offset <= 0 ? 0 : s.lastIndexOf('\n', offset - 1) + 1;
-
-int _markerLength(String s, int line) {
-  if (s.startsWith(_bullet, line)) return _bullet.length;
-  final m = _numbered.matchAsPrefix(s, line);
-  return m == null ? 0 : m.end - line;
-}
-
-ListKind? _kindAt(String s, int line) {
-  if (s.startsWith(_bullet, line)) return ListKind.bullet;
-  return _numbered.matchAsPrefix(s, line) == null ? null : ListKind.numbered;
-}
 
 /// Normalises a typed link: bare addresses become `mailto:`, anything else
 /// without a scheme `https://`. Returns null for an empty or unsafe link.
@@ -490,76 +378,86 @@ String? normalizeLink(String input) {
   return 'https://$s';
 }
 
-/// Reads the subset of HTML that mail editors write back into text, styles
-/// and links.
+/// Reads the subset of HTML that mail editors write back into lines of text
+/// with styles, links, lists, quotes and indents.
 class _HtmlReader {
   _HtmlReader(this.html);
 
   final String html;
-  final _text = StringBuffer();
-  final styles = <int>[];
-  final links = <String?>[];
-  final _open = <String, int>{};
+  final _lines = <_Line>[];
+  var _line = _Line();
+
+  /// Open inline elements and the attributes each gives its text.
+  final _inline = <(String, Map<String, dynamic>)>[];
   final _hrefs = <String?>[];
-  final _lists = <(ListKind, int)>[];
-  var _quote = 0;
+
+  /// Open block elements: `ul`, `ol`, `quote`, `indent`, or another tag
+  /// with the indent its margin gives.
+  final _blocks = <(String, int)>[];
 
   static const _flags = {
-    'b': InlineStyle.bold,
-    'strong': InlineStyle.bold,
-    'i': InlineStyle.italic,
-    'em': InlineStyle.italic,
-    'u': InlineStyle.underline,
-    's': InlineStyle.strike,
-    'strike': InlineStyle.strike,
-    'del': InlineStyle.strike,
+    'b': 'bold',
+    'strong': 'bold',
+    'i': 'italic',
+    'em': 'italic',
+    'u': 'underline',
+    'ins': 'underline',
+    's': 'strike',
+    'strike': 'strike',
+    'del': 'strike',
   };
-  static const _blocks = {'div', 'p', 'li', 'ul', 'ol', 'blockquote', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'pre'};
+  static const _blockTags = {
+    'div', 'p', 'li', 'ul', 'ol', 'blockquote', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'pre', //
+  };
 
-  /// Something, if only a list marker, was written on the current line.
+  /// The line has started, if only as an empty list item.
   var _lineOpen = false;
 
   /// Text was written on the current line.
   var _lineHasText = false;
 
-  int get _style {
-    var s = 0;
-    _open.forEach((tag, count) {
-      if (count > 0) s |= _flags[tag]!;
-    });
-    return s;
+  Map<String, dynamic> get _style => {for (final (_, attrs) in _inline) ...attrs};
+
+  /// The attributes of a line starting here; [item] for a list item.
+  Map<String, dynamic> _blockAttrs({bool item = false}) {
+    final lists = [for (final (kind, _) in _blocks) if (kind == 'ul' || kind == 'ol') kind];
+    var indent = 0;
+    for (final (kind, margin) in _blocks) {
+      indent += kind == 'indent' ? 1 : margin;
+    }
+    if (item && lists.isNotEmpty) {
+      indent += lists.length - 1;
+      return {'list': lists.last == 'ol' ? 'ordered' : 'bullet', if (indent > 0) 'indent': math.min(indent, 5)};
+    }
+    indent += lists.length;
+    return {
+      if (_blocks.any((b) => b.$1 == 'quote')) 'blockquote': true,
+      if (indent > 0) 'indent': math.min(indent, 5),
+    };
   }
 
-  void _append(String s, int style, String? link) {
-    _text.write(s);
-    styles.addAll(List.filled(s.length, style));
-    links.addAll(List.filled(s.length, link));
-  }
-
-  void _openLine() {
-    if (!_lineOpen && _quote > 0) _append('> ' * _quote, 0, null);
+  void _openLine({bool item = false}) {
+    if (_lineOpen) return;
+    _line.attrs = _blockAttrs(item: item);
     _lineOpen = true;
   }
 
   void _write(String s) {
     if (s.isEmpty) return;
     _openLine();
-    _append(s, _style, _hrefs.lastOrNull);
+    final attrs = {..._style, 'link': ?_hrefs.lastOrNull};
+    _line.runs.add((s, attrs));
     _lineHasText = true;
   }
 
   void _newline() {
-    _append('\n', 0, null);
+    _openLine();
+    _lines.add(_line);
+    _line = _Line();
     _lineOpen = _lineHasText = false;
   }
 
-  /// Ends the current line before a block, unless it holds no text yet
-  /// (`<li><div>…`).
-  void _breakLine() {
-    if (_lineHasText) _newline();
-  }
-
-  ({String text, List<int> styles, List<String?> links}) read() {
+  Delta read() {
     final source = html.replaceAll(
         RegExp(r'<!--[\s\S]*?-->|<(head|style|script|title)\b[^>]*>[\s\S]*?</\1>', caseSensitive: false), '');
     final token = RegExp(r'<(/?)([a-zA-Z][a-zA-Z0-9]*)([^>]*)>|([^<]+)|<');
@@ -571,45 +469,145 @@ class _HtmlReader {
       }
       final closing = m[1]!.isNotEmpty;
       final tag = m[2]!.toLowerCase();
+      final attrs = m[3]!;
       if (tag == 'br') {
         _newline();
-      } else if (_flags.containsKey(tag)) {
-        _open[tag] = ((_open[tag] ?? 0) + (closing ? -1 : 1)).clamp(0, 1 << 20);
+      } else if (_flags.containsKey(tag) || tag == 'span' || tag == 'font') {
+        if (closing) {
+          final i = _inline.lastIndexWhere((e) => e.$1 == tag);
+          if (i >= 0) _inline.removeAt(i);
+        } else {
+          _inline.add((tag, {?_flags[tag]: true, ..._styleAttrs(tag, attrs)}));
+        }
       } else if (tag == 'a') {
         if (closing) {
           if (_hrefs.isNotEmpty) _hrefs.removeLast();
         } else {
-          final href = RegExp(r'''href\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))''', caseSensitive: false).firstMatch(m[3]!);
+          final href = RegExp(r'''href\s*=\s*("([^"]*)"|'([^']*)'|([^\s>]+))''', caseSensitive: false).firstMatch(attrs);
           final url = href == null ? null : _decode(href[2] ?? href[3] ?? href[4]!);
           _hrefs.add(url == null ? null : normalizeLink(url));
         }
-      } else if (_blocks.contains(tag)) {
-        _breakLine();
-        switch ((tag, closing)) {
-          case ('ul', false):
-            _lists.add((ListKind.bullet, 1));
-          case ('ol', false):
-            final start = RegExp(r'start\s*=\s*"?(\d+)').firstMatch(m[3]!);
-            _lists.add((ListKind.numbered, start == null ? 1 : int.parse(start[1]!)));
-          case ('ul' || 'ol', true):
-            if (_lists.isNotEmpty) _lists.removeLast();
-          case ('li', false) when _lists.isNotEmpty:
-            if (_lineOpen) _newline();
-            final (kind, n) = _lists.last;
-            _openLine();
-            _append(kind == ListKind.bullet ? _bullet : '$n. ', _style, null);
-            _lists.last = (kind, n + 1);
-          case ('blockquote', false):
-            _quote++;
-          case ('blockquote', true):
-            if (_quote > 0) _quote--;
-          default:
+      } else if (_blockTags.contains(tag)) {
+        // A closing list item ends its line even when empty; anything else
+        // only once it holds text (`<li><div>…`).
+        if (_lineHasText || (closing && _lineOpen && const {'li', 'ul', 'ol', 'blockquote'}.contains(tag))) {
+          _newline();
+        }
+        if (closing) {
+          if (tag == 'li') continue;
+          final kind = switch (tag) { 'blockquote' => const {'quote', 'indent'}, _ => {tag} };
+          final i = _blocks.lastIndexWhere((b) => kind.contains(b.$1));
+          if (i >= 0) _blocks.removeRange(i, _blocks.length);
+        } else {
+          switch (tag) {
+            case 'ul' || 'ol':
+              _blocks.add((tag, 0));
+            case 'blockquote':
+              // Gmail indents with borderless blockquotes.
+              final style = _attr(attrs, 'style')?.replaceAll(' ', '').toLowerCase() ?? '';
+              _blocks.add((style.contains('border:none') || style.contains('border-left:none') ? 'indent' : 'quote', 0));
+            case 'li':
+              if (_lineOpen) _newline();
+              _openLine(item: true);
+            default:
+              _blocks.add((tag, _marginIndent(attrs)));
+          }
         }
       }
     }
-    // Drop trailing blank lines.
-    final s = _text.toString().trimRight();
-    return (text: s, styles: styles.sublist(0, s.length), links: links.sublist(0, s.length));
+    if (_lineOpen || _lineHasText) _newline();
+    while (_lines.isNotEmpty && _lines.last.isBlank) {
+      _lines.removeLast();
+    }
+    final delta = Delta();
+    for (final line in _lines) {
+      for (final (text, attrs) in line.runs) {
+        delta.insert(text, attrs.isEmpty ? null : attrs);
+      }
+      delta.insert('\n', line.attrs.isEmpty ? null : line.attrs);
+    }
+    if (delta.isEmpty) delta.insert('\n');
+    return delta;
+  }
+
+  static String? _attr(String attrs, String name) {
+    final m = RegExp('\\b$name\\s*=\\s*("([^"]*)"|\'([^\']*)\'|([^\\s>]+))', caseSensitive: false).firstMatch(attrs);
+    return m == null ? null : _decode(m[2] ?? m[3] ?? m[4]!);
+  }
+
+  /// Text attributes from a `style`, or a `<font>`'s `color` and `size`.
+  static Map<String, dynamic> _styleAttrs(String tag, String attrs) {
+    final out = <String, dynamic>{};
+    final css = <String, String>{
+      for (final decl in (_attr(attrs, 'style') ?? '').split(';'))
+        if (decl.indexOf(':') case final i when i > 0)
+          decl.substring(0, i).trim().toLowerCase(): decl.substring(i + 1).trim().toLowerCase(),
+    };
+    final color = _parseColor(css['color'] ?? (tag == 'font' ? _attr(attrs, 'color') : null));
+    if (color != null) out['color'] = color;
+    final size = css['font-size'] != null
+        ? _cssSize(css['font-size']!)
+        : tag == 'font'
+            ? switch (_attr(attrs, 'size')?.trim()) {
+                '1' || '2' => TextSize.small,
+                '4' || '5' => TextSize.large,
+                '6' || '7' => TextSize.huge,
+                _ => null,
+              }
+            : null;
+    if (size?.value != null) out['size'] = size!.value;
+    final weight = css['font-weight'];
+    if (weight == 'bold' || weight == 'bolder' || (int.tryParse(weight ?? '') ?? 0) >= 600) out['bold'] = true;
+    if (css['font-style'] == 'italic') out['italic'] = true;
+    final decoration = css['text-decoration'] ?? css['text-decoration-line'] ?? '';
+    if (decoration.contains('underline')) out['underline'] = true;
+    if (decoration.contains('line-through')) out['strike'] = true;
+    return out;
+  }
+
+  static TextSize? _cssSize(String v) {
+    switch (v) {
+      case 'xx-small' || 'x-small' || 'small' || 'smaller':
+        return TextSize.small;
+      case 'large' || 'x-large' || 'larger':
+        return TextSize.large;
+      case 'xx-large' || 'xxx-large':
+        return TextSize.huge;
+    }
+    final m = RegExp(r'^([\d.]+)(px|pt|em|rem|%)$').firstMatch(v);
+    final n = double.tryParse(m?[1] ?? '');
+    if (n == null) return null;
+    final px = switch (m![2]) { 'pt' => n * 4 / 3, 'em' || 'rem' => n * 16, '%' => n * 0.16, _ => n };
+    return px < 14.5 ? TextSize.small : (px < 17.5 ? null : (px < 27 ? TextSize.large : TextSize.huge));
+  }
+
+  /// `#rrggbb` for a CSS colour. Black and white are left out: they are
+  /// another client's default, and would vanish on the dark compose window.
+  static String? _parseColor(String? v) {
+    if (v == null) return null;
+    v = v.trim().toLowerCase();
+    int? rgb;
+    if (RegExp(r'^#[0-9a-f]{6}$').hasMatch(v)) {
+      rgb = int.parse(v.substring(1), radix: 16);
+    } else if (RegExp(r'^#[0-9a-f]{3}$').hasMatch(v)) {
+      rgb = int.parse(v.substring(1).split('').map((c) => '$c$c').join(), radix: 16);
+    } else if (RegExp(r'^rgba?\(\s*(\d+)\s*,\s*(\d+)\s*,\s*(\d+)').firstMatch(v) case final m?) {
+      rgb = [m[1], m[2], m[3]].fold<int>(0, (acc, c) => (acc << 8) | int.parse(c!).clamp(0, 255));
+    }
+    if (rgb == null) return null;
+    final luminance = Color(0xFF000000 | rgb).computeLuminance();
+    if (luminance < 0.02 || luminance > 0.85) return null;
+    return '#${rgb.toRadixString(16).padLeft(6, '0')}';
+  }
+
+  /// Indent levels from a block's left margin, as Outlook indents.
+  static int _marginIndent(String attrs) {
+    final style = (_attr(attrs, 'style') ?? '').toLowerCase();
+    final m = RegExp(r'margin-left\s*:\s*([\d.]+)(px|pt|em|in)').firstMatch(style);
+    final n = double.tryParse(m?[1] ?? '');
+    if (n == null) return 0;
+    final px = switch (m![2]) { 'pt' => n * 4 / 3, 'em' => n * 16, 'in' => n * 96, _ => n };
+    return (px / 40).round().clamp(0, 5);
   }
 
   static String _decode(String s) => s.replaceAllMapped(RegExp(r'&(#x[0-9a-fA-F]+|#\d+|[a-zA-Z]+);'), (m) {
