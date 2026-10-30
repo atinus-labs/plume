@@ -252,6 +252,17 @@ class FakeGmail {
           'historyId': historyId,
           if (more) 'nextPageToken': '${offset + page.length}',
         });
+      case ('GET', ['drafts']):
+        final all = [
+          for (final e in drafts.entries) {'id': e.key, 'message': {'id': e.value, 'threadId': messages[e.value]?['threadId']}},
+        ];
+        final size = int.tryParse(one('maxResults') ?? '') ?? 100;
+        final offset = int.tryParse(one('pageToken') ?? '') ?? 0;
+        final page = all.skip(offset).take(size).toList();
+        return _ok({
+          'drafts': page,
+          if (offset + page.length < all.length) 'nextPageToken': '${offset + page.length}',
+        });
       case ('POST', ['drafts']):
         final message = (body['message']! as Map).cast<String, Object?>();
         final stored = _storeRaw(message, ['DRAFT']);

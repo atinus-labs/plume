@@ -617,7 +617,9 @@ final class GmailProvider implements MailProvider {
       final draftId = message.draftId;
       if (draftId != null) {
         try {
-          return (await api.sendDraft(draftId, built.bytes, threadId: message.threadId)).id;
+          final sent = await api.sendDraft(draftId, built.bytes, threadId: message.threadId);
+          _draftIds.removeWhere((_, id) => id == draftId);
+          return sent.id;
         } on NotFoundException {
           _log.info('Draft no longer exists; sending as a new message');
         }
@@ -655,12 +657,39 @@ final class GmailProvider implements MailProvider {
     final draftId = message.draftId;
     if (draftId != null) {
       try {
-        return (await api.updateDraft(draftId, built.bytes, threadId: message.threadId)).id;
+        return _remember(await api.updateDraft(draftId, built.bytes, threadId: message.threadId));
       } on NotFoundException {
         _log.info('Draft no longer exists; creating a new one');
       }
     }
-    return (await api.createDraft(built.bytes, threadId: message.threadId)).id;
+    return _remember(await api.createDraft(built.bytes, threadId: message.threadId));
+  }
+
+  /// Draft ids by the id of the message holding the draft's current
+  /// version. Every update stores the draft as a new message.
+  final _draftIds = <String, String>{};
+
+  String _remember(GmailDraft draft) {
+    _draftIds.removeWhere((_, id) => id == draft.id);
+    final messageId = draft.message?.id;
+    if (messageId != null && messageId.isNotEmpty) _draftIds[messageId] = draft.id;
+    return draft.id;
+  }
+
+  @override
+  Future<String?> draftIdOf(String messageId) async {
+    final known = _draftIds[messageId];
+    if (known != null) return known;
+    String? pageToken;
+    do {
+      final page = await api.listDrafts(pageToken: pageToken, maxResults: 500);
+      for (final d in page.drafts) {
+        _remember(d);
+      }
+      if (_draftIds[messageId] case final id?) return id;
+      pageToken = page.nextPageToken;
+    } while (pageToken != null);
+    return null;
   }
 
   @override
@@ -670,6 +699,7 @@ final class GmailProvider implements MailProvider {
     } on NotFoundException {
       // Already gone.
     }
+    _draftIds.removeWhere((_, id) => id == draftId);
   }
 
   // Search -----------------------------------------------------------------

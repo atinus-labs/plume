@@ -4,15 +4,17 @@ import 'dart:ui' show lerpDouble;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:intl/intl.dart';
 import 'package:plume_core/plume_core.dart';
 import 'package:plume_design/plume_design.dart';
 import 'package:plume_mime/plume_mime.dart' show MailtoLink;
 
 import '../../state/mail.dart';
 import '../../state/navigation.dart';
+import '../../state/services.dart';
 import '../../state/settings.dart';
+import '../actions.dart';
 import 'compose_panel.dart';
+import 'mail_body.dart';
 
 enum ComposeMode { fresh, reply, replyAll, forward }
 
@@ -31,11 +33,12 @@ final class ComposeRequest {
     this.html,
     this.plainText = false,
     this.quoted,
+    this.quote,
     this.threadId,
     this.inReplyTo,
     this.references = const [],
     this.draftId,
-    this.forwardFrom,
+    this.attachmentsFrom,
     this.attachments = const [],
   });
 
@@ -56,13 +59,18 @@ final class ComposeRequest {
 
   /// The original message, quoted below the reply.
   final Message? quoted;
+
+  /// The quote as written before, for a message being edited again; takes
+  /// the place of [quoted].
+  final String? quote;
   final String? threadId;
   final String? inReplyTo;
   final List<String> references;
   final String? draftId;
 
-  /// For forwards: the message whose attachments come along.
-  final Message? forwardFrom;
+  /// The message whose attachments come along: a forward's original, or the
+  /// draft being edited.
+  final Message? attachmentsFrom;
   final List<OutgoingAttachment> attachments;
 }
 
@@ -89,7 +97,7 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
     final blank = state
         .where((r) => r.mode == ComposeMode.fresh && r.to.isEmpty && to.isEmpty)
         .firstOrNull;
-    if (blank != null) return;
+    if (blank != null) return _bringForward(blank.id);
     _open(
       ComposeRequest(
         id: _next++,
@@ -164,37 +172,146 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
         accountId: m.accountId,
         subject: _prefixed('Fwd:', m.subject),
         quoted: m,
-        forwardFrom: m,
+        attachmentsFrom: m,
       ),
       origin: origin ?? ComposeAnchor.rectOf(ComposeSource.reply),
     );
   }
 
-  /// Re-opens a message taken back by undo-send or a failed send.
+  /// Re-opens a message taken back by undo-send or a failed send, or one
+  /// just closed.
   void reopen(OutgoingMessage message) {
+    _open(_edit(
+      accountId: message.accountId,
+      to: message.to,
+      cc: message.cc,
+      bcc: message.bcc,
+      subject: message.subject,
+      text: message.textBody,
+      html: message.htmlBody,
+      threadId: message.threadId,
+      inReplyTo: message.inReplyTo,
+      references: message.references,
+      draftId: message.draftId,
+      attachments: message.attachments,
+    ));
+  }
+
+  /// Opens a saved [draft] to carry on writing it. When it is open already,
+  /// that window stays the only one.
+  Future<void> openDraft(Message draft, {Rect? origin}) async {
+    if (!_loading.add(draft.id)) return;
+    final engine = ref.read(engineProvider);
+    final store = ref.read(storeProvider);
+    final String? draftId;
+    final Message message;
+    final MessageBody? saved;
+    try {
+      // Gmail lists attachments once the body is in, so the message is read
+      // again after it.
+      Future<(Message, MessageBody?)> load() async {
+        await engine.ensureBodies(draft.accountId, [draft.id]);
+        final thread = await store.messagesInThreads(draft.accountId, [draft.threadId]);
+        return (
+          thread.where((m) => m.id == draft.id).firstOrNull ?? draft,
+          await store.body(draft.accountId, draft.id),
+        );
+      }
+
+      final loaded = await (engine.draftIdOf(draft.accountId, draft.id), load()).wait;
+      draftId = loaded.$1;
+      (message, saved) = loaded.$2;
+    } on Object {
+      showSnack('Couldn’t open the draft');
+      return;
+    } finally {
+      _loading.remove(draft.id);
+    }
+    if (draftId == null) {
+      // Sent or deleted elsewhere; the next sync takes it away here too.
+      showSnack('This draft is no longer on the server');
+      unawaited(engine.syncAccount(draft.accountId));
+      return;
+    }
+    final open = state.where((r) => (_draftIds[r.id] ?? r.draftId) == draftId).firstOrNull;
+    if (open != null) return _bringForward(open.id);
     _open(
-      ComposeRequest(
-        id: _next++,
-        mode: message.threadId == null ? ComposeMode.fresh : ComposeMode.reply,
+      _edit(
         accountId: message.accountId,
         to: message.to,
         cc: message.cc,
         bcc: message.bcc,
         subject: message.subject,
-        body: message.textBody,
-        html: message.htmlBody,
-        plainText: message.htmlBody == null,
-        threadId: message.threadId,
+        text: saved?.text ?? message.snippet,
+        html: saved?.html,
+        // Only replies are filed into the conversation they answer.
+        threadId: message.inReplyTo == null ? null : message.threadId,
         inReplyTo: message.inReplyTo,
         references: message.references,
-        draftId: message.draftId,
-        attachments: message.attachments,
+        draftId: draftId,
+        attachmentsFrom: message.hasAttachments ? message : null,
       ),
+      origin: origin,
+    );
+  }
+
+  /// A window for editing a message written before.
+  ComposeRequest _edit({
+    required String accountId,
+    required List<Address> to,
+    required List<Address> cc,
+    required List<Address> bcc,
+    required String subject,
+    required String text,
+    required String? html,
+    required String? threadId,
+    required String? inReplyTo,
+    required List<String> references,
+    required String? draftId,
+    List<OutgoingAttachment> attachments = const [],
+    Message? attachmentsFrom,
+  }) {
+    final body = editableBody(
+      text: text,
+      html: html,
+      signature: ref.read(accountMapProvider)[accountId]?.signature,
+      reply: inReplyTo != null,
+    );
+    final forward = body.quote?.startsWith(forwardedHeader) ?? false;
+    return ComposeRequest(
+      id: _next++,
+      mode: forward ? ComposeMode.forward : (inReplyTo == null ? ComposeMode.fresh : ComposeMode.reply),
+      accountId: accountId,
+      to: to,
+      cc: cc,
+      bcc: bcc,
+      subject: subject,
+      body: body.text,
+      html: body.html,
+      plainText: body.html == null,
+      quote: body.quote,
+      threadId: threadId,
+      inReplyTo: inReplyTo,
+      references: references,
+      draftId: draftId,
+      attachments: attachments,
+      attachmentsFrom: attachmentsFrom,
     );
   }
 
   final _sent = <int>{};
   final _origins = <int, Rect>{};
+
+  /// Drafts being loaded to open, by message id.
+  final _loading = <String>{};
+
+  /// The draft each window last saved to.
+  final _draftIds = <int, String>{};
+
+  /// Window [id] saved its draft as [draftId].
+  void saved(int id, String draftId) {
+    if (state.any((r) => r.id == id)) _draftIds[id] = draftId;
+  }
 
   /// Whether window [id] closed by sending, which it leaves differently.
   bool wasSent(int id) => _sent.contains(id);
@@ -202,8 +319,11 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
   /// Where window [id] was opened from, once: the window grows out of it.
   Rect? takeOrigin(int id) => _origins.remove(id);
 
+  void _bringForward(int id) => ref.read(composeForwardProvider.notifier).request(id);
+
   void close(int id, {bool sent = false}) {
     if (sent) _sent.add(id);
+    _draftIds.remove(id);
     state = [
       for (final r in state)
         if (r.id != id) r,
@@ -235,10 +355,17 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
   }
 }
 
-/// `On Tue, 14 Oct 2025 at 10:42, Maya Chen <maya@…> wrote:`
-String attributionLine(Message m) {
-  final date = DateFormat("EEE, d MMM y 'at' HH:mm").format(m.date.toLocal());
-  return 'On $date, ${m.from?.format() ?? 'someone'} wrote:';
+/// The last compose window asked for again while open, to be restored and
+/// focused.
+final composeForwardProvider = NotifierProvider<ComposeForward, ({int id, int count})?>(ComposeForward.new);
+
+class ComposeForward extends Notifier<({int id, int count})?> {
+  var _count = 0;
+
+  @override
+  ({int id, int count})? build() => null;
+
+  void request(int id) => state = (id: id, count: _count++);
 }
 
 /// The compose window shown maximised, if any.

@@ -1,0 +1,150 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_quill/flutter_quill.dart' show QuillEditor;
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:plume/src/state/mail.dart';
+import 'package:plume/src/state/navigation.dart';
+import 'package:plume/src/state/services.dart';
+import 'package:plume/src/ui/actions.dart';
+import 'package:plume/src/ui/app.dart';
+import 'package:plume/src/ui/compose/compose_host.dart';
+import 'package:plume/src/ui/compose/compose_panel.dart';
+import 'package:plume/src/ui/reader/message_card.dart';
+import 'package:plume/src/ui/reader/reader_pane.dart';
+import 'package:plume_core/plume_core.dart';
+import 'package:plume_store/plume_store.dart';
+
+import 'support/demo_services.dart';
+
+/// The demo account, which comes with a reply in Tokyo and a new message
+/// in Drafts.
+void main() {
+  late WidgetTester t;
+  late WidgetRef ref;
+  late Services services;
+
+  Future<void> settle() async {
+    for (var i = 0; i < 12; i++) {
+      await t.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 30)));
+      await t.pump(const Duration(milliseconds: 100));
+    }
+  }
+
+  Future<void> start(WidgetTester tester) async {
+    t = tester;
+    tester.view.physicalSize = const Size(1600, 1000);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    services = (await tester.runAsync(demoServices))!;
+    final container = ProviderContainer(overrides: [servicesProvider.overrideWithValue(services)]);
+    await tester.pumpWidget(UncontrolledProviderScope(
+      container: container,
+      child: Consumer(builder: (context, r, child) {
+        ref = r;
+        return child!;
+      }, child: const PlumeApp()),
+    ));
+    await settle();
+    addTearDown(() async {
+      Toaster.instance.clear();
+      await tester.pumpWidget(const SizedBox());
+      container.dispose();
+      await tester.pump(const Duration(seconds: 30));
+      await tester.runAsync(services.engine.dispose);
+      await tester.runAsync((services.store as DriftMailStore).close);
+    });
+  }
+
+  Future<List<Message>> drafts() async => [
+        for (final m in (await t.runAsync(() async {
+          final threads = await services.store.watchThreads(const RoleFilter(MailboxRole.drafts)).first;
+          return [
+            for (final x in threads) ...await services.store.messagesInThreads(x.accountId, [x.id]),
+          ];
+        }))!)
+          if (m.isDraft) m,
+      ];
+
+  String typed() => t.widget<QuillEditor>(find.byType(QuillEditor)).controller.document.toPlainText().trim();
+
+  testWidgets('a reply drafted earlier opens from its conversation and saves without doubling up', (tester) async {
+    await start(tester);
+    final account = (await t.runAsync(services.store.accounts))!.single;
+    await t.runAsync(() => services.store.saveAccount(account.copyWith(signature: 'Alex')));
+    final tokyo = ref.read(visibleThreadsProvider).value!.firstWhere((x) => x.subject.contains('Tokyo'));
+    openThread(ref, tokyo);
+    await settle();
+
+    expect(find.descendant(of: find.byType(ReaderPane), matching: find.byType(DraftCard)), findsOneWidget);
+    await t.tap(find.widgetWithText(FilledButton, 'Edit'));
+    await settle();
+
+    expect(find.byType(ComposePanel), findsOneWidget);
+    expect(typed(), startsWith('Count me in!'));
+    // The quote is kept apart, as when the reply was first written.
+    expect(typed(), isNot(contains('wrote:')));
+    expect(find.text('Quoted text'), findsOneWidget);
+
+    // Asking again brings the open window back instead of opening another.
+    await t.tap(find.byTooltip('Minimise'));
+    await settle();
+    await t.tap(find.widgetWithText(FilledButton, 'Edit'));
+    await settle();
+    expect(find.byType(ComposePanel), findsOneWidget);
+    expect(find.byType(QuillEditor), findsOneWidget);
+
+    final editor = t.widget<QuillEditor>(find.byType(QuillEditor)).controller;
+    editor.replaceText(editor.document.length - 1, 0, ' See you there.', null);
+    await t.tap(find.byTooltip('Save & close (Esc)'));
+    await settle();
+    expect(find.byType(ComposePanel), findsNothing);
+    expect(find.text('Draft saved'), findsOneWidget);
+
+    final saved = (await drafts()).firstWhere((m) => m.threadId == tokyo.id);
+    final body = (await t.runAsync(() => services.store.body(saved.accountId, saved.id)))!;
+    expect(body.text, contains('Ten minutes sounds about right. See you there.'));
+    expect('\n-- \nAlex'.allMatches(body.text!), hasLength(1));
+    expect('wrote:'.allMatches(body.text!), hasLength(1));
+    expect('plume_signature'.allMatches(body.html!), hasLength(1));
+
+    // And once more, to make sure it reads back the same.
+    await t.tap(find.widgetWithText(FilledButton, 'Edit'));
+    await settle();
+    expect(typed(), 'Count me in! I could show how the compose window grows out of the button that opened it. '
+        'Ten minutes sounds about right. See you there.');
+  });
+
+  testWidgets('a new message in Drafts opens to be written, and can be discarded', (tester) async {
+    await start(tester);
+    ref.read(viewProvider.notifier).show(const MailView(ViewKind.drafts));
+    await settle();
+
+    await t.tap(find.text('Packing list for Lisbon'));
+    await settle();
+    expect(find.byType(ComposePanel), findsOneWidget);
+    expect(typed(), startsWith('Sunscreen'));
+    // Nothing to read, so the reader stays as it was.
+    expect(ref.read(openThreadProvider), isNull);
+
+    await t.tap(find.byTooltip('Discard draft'));
+    await settle();
+    expect(find.byType(ComposePanel), findsNothing);
+    expect((await drafts()).map((m) => m.subject), isNot(contains('Packing list for Lisbon')));
+  });
+
+  testWidgets('a message closed by mistake opens again from the snackbar', (tester) async {
+    await start(tester);
+    ref.read(composeProvider.notifier).newMessage();
+    await settle();
+    await t.enterText(find.widgetWithText(TextField, 'Subject'), 'Before I forget');
+    await t.sendKeyEvent(LogicalKeyboardKey.escape);
+    await settle();
+    expect(find.byType(ComposePanel), findsNothing);
+
+    await t.tap(find.text('Open'));
+    await settle();
+    expect(find.byType(ComposePanel), findsOneWidget);
+    expect(find.widgetWithText(TextField, 'Before I forget'), findsOneWidget);
+  });
+}

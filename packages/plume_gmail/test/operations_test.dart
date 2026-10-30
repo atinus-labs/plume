@@ -206,6 +206,29 @@ void main() {
       expect(gmail.drafts, isEmpty);
     });
 
+    test('a draft found in a mailbox is matched to its draft id', () async {
+      final draftId = await provider.saveDraft(outgoing());
+      final messageId = gmail.drafts[draftId]!;
+      // Another session: nothing remembered, so the drafts are listed.
+      final other = GmailProvider(
+        account: testAccount,
+        tokens: FakeTokenSource(),
+        httpClient: gmail.client,
+        clientConfig: const GmailClientConfig(quota: GmailQuota.unlimited, maxRetries: 1),
+      );
+      expect(await other.draftIdOf(messageId), draftId);
+      expect(await other.draftIdOf('a1'), isNull);
+
+      // Saving again stores the draft as a new message.
+      gmail.log.clear();
+      await provider.saveDraft(outgoing(draftId: draftId));
+      final current = gmail.drafts[draftId]!;
+      expect(await provider.draftIdOf(current), draftId);
+      expect(gmail.log, isNot(contains(startsWith('GET drafts'))));
+      await provider.deleteDraft(draftId);
+      expect(await provider.draftIdOf(current), isNull);
+    });
+
     test('a vanished draft or thread does not block sending', () async {
       final updated = await provider.saveDraft(outgoing(draftId: 'deleted-elsewhere'));
       expect(updated, isNot('deleted-elsewhere'));

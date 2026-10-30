@@ -308,6 +308,10 @@ final class ImapProvider implements MailProvider {
         return id;
       });
 
+  /// Drafts go by the id of the message holding them.
+  @override
+  Future<String?> draftIdOf(String messageId) async => messageId;
+
   @override
   Future<void> deleteDraft(String draftId) => guarded(() async {
         final ctx = _context;

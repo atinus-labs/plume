@@ -1,7 +1,6 @@
 import 'package:flutter/gestures.dart';
 
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/material.dart';
@@ -23,6 +22,7 @@ import '../common/format.dart';
 import 'body_editor.dart';
 import 'compose_host.dart';
 import 'format_bar.dart';
+import 'mail_body.dart';
 import 'recipient_field.dart';
 import 'rich_text.dart';
 
@@ -90,9 +90,12 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
   final _ccKey = GlobalKey<RecipientFieldState>();
   final _bccKey = GlobalKey<RecipientFieldState>();
   late List<OutgoingAttachment> _attachments = [...widget.request.attachments];
-  bool _loadingForwarded = false;
-  String? _quotedText;
-  bool _showQuote = false;
+  bool _loadingAttachments = false;
+
+  /// Done once the attachments that come along are in.
+  Future<void> _attachmentsLoaded = Future.value();
+  late String? _quotedText = widget.request.quote;
+  late bool _showQuote = widget.request.mode == ComposeMode.forward;
   bool _minimized = false;
   late final bool _animateIn = widget.animateIn;
   late String? _draftId = widget.request.draftId;
@@ -117,11 +120,10 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     _body.addListener(_scheduleSave);
     _plainBody.addListener(_scheduleSave);
     unawaited(_loadQuote());
-    if (widget.request.forwardFrom != null)
-      unawaited(_loadForwardedAttachments());
-    // Replies start in the body; new messages in the To field.
-    if (widget.request.mode != ComposeMode.fresh &&
-        widget.request.mode != ComposeMode.forward) {
+    if (widget.request.attachmentsFrom != null) {
+      _attachmentsLoaded = _loadAttachments();
+    }
+    if (!_startInTo) {
       WidgetsBinding.instance.addPostFrameCallback(
         (_) => _bodyFocus.requestFocus(),
       );
@@ -139,9 +141,16 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     super.dispose();
   }
 
+  /// New replies and messages with recipients start in the body; other new
+  /// messages in the To field.
+  bool get _startInTo =>
+      (widget.request.mode == ComposeMode.fresh ||
+          widget.request.mode == ComposeMode.forward) &&
+      widget.request.to.isEmpty;
+
   Future<void> _loadQuote() async {
     final m = widget.request.quoted;
-    if (m == null) return;
+    if (m == null || widget.request.quote != null) return;
     final body = await ref.read(storeProvider).body(m.accountId, m.id);
     var text = body?.text;
     if ((text == null || text.trim().isEmpty) && body?.html != null)
@@ -149,30 +158,17 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     text ??= m.snippet;
     if (!mounted) return;
     setState(() {
-      if (widget.request.mode == ComposeMode.forward) {
-        _quotedText = [
-          '---------- Forwarded message ---------',
-          'From: ${m.from?.format() ?? ''}',
-          'Date: ${fullDate(m.date)}',
-          'Subject: ${m.subject}',
-          'To: ${m.to.map((a) => a.format()).join(', ')}',
-          if (m.cc.isNotEmpty) 'Cc: ${m.cc.map((a) => a.format()).join(', ')}',
-          '',
-          text!,
-        ].join('\n');
-        _showQuote = true;
-      } else {
-        _quotedText =
-            '${attributionLine(m)}\n${text!.trimRight().split('\n').map((l) => l.isEmpty ? '>' : '> $l').join('\n')}';
-      }
+      _quotedText = widget.request.mode == ComposeMode.forward
+          ? forwardQuote(m, text!)
+          : replyQuote(m, text!);
     });
   }
 
-  Future<void> _loadForwardedAttachments() async {
-    final m = widget.request.forwardFrom!;
+  Future<void> _loadAttachments() async {
+    final m = widget.request.attachmentsFrom!;
     final infos = m.attachments.where((a) => !a.isInline).toList();
     if (infos.isEmpty) return;
-    setState(() => _loadingForwarded = true);
+    setState(() => _loadingAttachments = true);
     final engine = ref.read(engineProvider);
     try {
       for (final info in infos) {
@@ -192,7 +188,7 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     } catch (_) {
       showSnack('Some attachments couldn’t be included');
     } finally {
-      if (mounted) setState(() => _loadingForwarded = false);
+      if (mounted) setState(() => _loadingAttachments = false);
     }
   }
 
@@ -217,20 +213,29 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
       _bodyText.trim().isEmpty &&
       _attachments.isEmpty;
 
-  Future<void> _saveDraft() async {
-    if (_isEmpty || _sending) return;
+  /// Saves run one after another, so each updates the draft the last one
+  /// made instead of making another.
+  Future<bool> _saving = Future.value(false);
+
+  /// Saves the draft, returning whether it is saved.
+  Future<bool> _saveDraft() => _saving = _saving.then((_) => _save());
+
+  Future<bool> _save() async {
+    // A draft saved without the attachments still coming would lose them.
+    await _attachmentsLoaded;
+    if (_isEmpty || _sending || !mounted) return false;
     final message = _build();
-    if (message == null) return;
+    if (message == null) return false;
     setState(() => _saveState = 'Saving…');
     try {
       final id = await ref.read(engineProvider).saveDraft(message);
-      if (!mounted) return;
-      setState(() {
-        _draftId = id;
-        _saveState = 'Draft saved';
-      });
+      _draftId = id;
+      ref.read(composeProvider.notifier).saved(widget.request.id, id);
+      if (mounted) setState(() => _saveState = 'Draft saved');
+      return true;
     } catch (_) {
-      if (mounted) setState(() => _saveState = 'Saved on this device');
+      if (mounted) setState(() => _saveState = 'Couldn’t save the draft');
+      return false;
     }
   }
 
@@ -243,11 +248,6 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     final quote = _quotedText;
     final typed = _plainText ? _plainBody.text.trimRight() : _body.document.toMailText();
     final signature = account.signature?.trim();
-    final textParts = [
-      typed,
-      if (signature != null && signature.isNotEmpty) '\n-- \n$signature',
-      if (quote != null) '\n$quote',
-    ];
     return OutgoingMessage(
       accountId: account.id,
       from: Address(account.email, account.displayName),
@@ -255,15 +255,10 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
       cc: _cc,
       bcc: _bcc,
       subject: _subject.text.trim(),
-      textBody: textParts.join('\n'),
+      textBody: mailText(typed, signature: signature, quote: quote),
       htmlBody: _plainText
           ? null
-          : _toHtml(
-              _body.document.toMailHtml(),
-              signature,
-              quote,
-              quoteIsForward: widget.request.mode == ComposeMode.forward,
-            ),
+          : mailHtml(_body.document.toMailHtml(), signature: signature, quote: quote),
       attachments: _attachments,
       threadId: widget.request.threadId,
       inReplyTo: widget.request.inReplyTo,
@@ -281,6 +276,9 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
       showSnack('Add at least one recipient');
       return;
     }
+    // A save still under way would leave its draft behind.
+    await (_attachmentsLoaded, _saving).wait;
+    if (!mounted) return;
     final message = _build();
     if (message == null) return;
     if (message.subject.isEmpty &&
@@ -318,23 +316,43 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
 
   Future<void> _discard() async {
     _autosave?.cancel();
-    final draftId = _draftId;
     final accountId = _accountId;
+    final engine = ref.read(engineProvider);
+    final empty = _isEmpty;
     ref.read(composeProvider.notifier).close(widget.request.id);
+    // Whatever a save under way makes goes too.
+    await _saving;
+    final draftId = _draftId;
     if (draftId != null && accountId != null) {
       try {
-        await ref.read(engineProvider).deleteDraft(accountId, draftId);
+        await engine.deleteDraft(accountId, draftId);
+        unawaited(engine.syncAccount(accountId));
       } catch (_) {}
     }
-    if (!_isEmpty) showSnack('Draft discarded');
+    if (!empty) showSnack('Draft discarded');
   }
 
+  /// Closes the window, keeping what was written as a draft. It shows up in
+  /// Drafts after the next sync; until then the snackbar opens it again.
   Future<void> _closeKeepingDraft() async {
     _autosave?.cancel();
-    final empty = _isEmpty;
-    if (!empty) await _saveDraft();
-    ref.read(composeProvider.notifier).close(widget.request.id);
-    if (!empty) showSnack('Draft saved');
+    if (_isEmpty) {
+      ref.read(composeProvider.notifier).close(widget.request.id);
+      return;
+    }
+    final saved = await _saveDraft();
+    if (!mounted) return;
+    final message = _build();
+    final composer = ref.read(composeProvider.notifier);
+    final engine = ref.read(engineProvider);
+    composer.close(widget.request.id);
+    if (saved && message != null) unawaited(engine.syncAccount(message.accountId));
+    showSnack(
+      saved ? 'Draft saved' : 'Couldn’t save the draft',
+      actionLabel: message == null ? null : 'Open',
+      duration: saved ? null : const Duration(seconds: 10),
+      onAction: message == null ? null : () => composer.reopen(message),
+    );
   }
 
   Future<bool> _confirm(String message, String action) async {
@@ -436,6 +454,15 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
 
   @override
   Widget build(BuildContext context) {
+    ref.listen(composeForwardProvider, (_, next) {
+      if (next?.id != widget.request.id) return;
+      setState(() => _minimized = false);
+      if (_to.isEmpty) {
+        _toKey.currentState?.focus();
+      } else {
+        _bodyFocus.requestFocus();
+      }
+    });
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     final size = MediaQuery.sizeOf(context);
@@ -580,9 +607,7 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
           key: _toKey,
           label: 'To',
           recipients: _to,
-          autofocus:
-              widget.request.mode == ComposeMode.fresh ||
-              widget.request.mode == ComposeMode.forward,
+          autofocus: _startInTo,
           onChanged: (v) {
             setState(() => _to = v);
             _scheduleSave();
@@ -709,7 +734,7 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
             ),
           ),
         ),
-        if (_attachments.isNotEmpty || _loadingForwarded)
+        if (_attachments.isNotEmpty || _loadingAttachments)
           SizedBox(
             height: 52,
             child: ListView(
@@ -729,7 +754,7 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
                       ),
                     ),
                   ),
-                if (_loadingForwarded)
+                if (_loadingAttachments)
                   const Center(child: LoadingIndicator(size: 32)),
               ],
             ),
@@ -1085,45 +1110,6 @@ String _mimeFor(String name) => switch (p.extension(name).toLowerCase()) {
   '.mp4' => 'video/mp4',
   _ => 'application/octet-stream',
 };
-
-/// Builds the HTML part around the formatted [body]: the signature and
-/// quote are escaped with paragraphs kept, links clickable, and the quote in
-/// a blockquote.
-String _toHtml(
-  String body,
-  String? signature,
-  String? quote, {
-  required bool quoteIsForward,
-}) {
-  String esc(String s) => const HtmlEscape(HtmlEscapeMode.element).convert(s);
-  String para(String s) => linkifyHtml(esc(s)).replaceAll('\n', '<br>');
-  final buffer = StringBuffer('<div dir="auto" style="font-family:sans-serif">')
-    ..write(body);
-  if (signature != null && signature.isNotEmpty) {
-    buffer.write(
-      '<br><div class="plume_signature">-- <br>${para(signature)}</div>',
-    );
-  }
-  buffer.write('</div>');
-  if (quote != null) {
-    if (quoteIsForward) {
-      buffer.write('<br><div class="gmail_quote">${para(quote)}</div>');
-    } else {
-      final lines = quote.split('\n');
-      final attribution = lines.first;
-      final quoted = lines
-          .skip(1)
-          .map((l) => l.startsWith('> ') ? l.substring(2) : (l == '>' ? '' : l))
-          .join('\n');
-      buffer.write(
-        '<br><div class="gmail_quote"><div>${esc(attribution)}</div>'
-        '<blockquote class="gmail_quote" style="margin:0 0 0 .8ex;border-left:1px solid #ccc;padding-left:1ex">'
-        '${para(quoted)}</blockquote></div>',
-      );
-    }
-  }
-  return buffer.toString();
-}
 
 /// Rough HTML to text for quoting.
 String _htmlToText(String html) {

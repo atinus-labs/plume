@@ -106,6 +106,8 @@ final class FakeProvider implements MailProvider {
   @override
   Future<void> deleteDraft(String draftId) async {}
   @override
+  Future<String?> draftIdOf(String messageId) async => messageId;
+  @override
   Future<void> dispose() async => disposals++;
 }
 

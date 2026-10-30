@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:plume_core/plume_core.dart';
 
 import '../services/accounts.dart';
+import '../ui/compose/mail_body.dart';
 
 /// A provider that generates believable mail locally. Used with
 /// `--dart-define=PLUME_DEMO=true` to develop and demo the UI without a real
@@ -57,6 +58,12 @@ final class DemoProvider implements MailProvider {
   final _messages = <String, Message>{};
   int _seq = 0;
 
+  /// Drafts saved (or deleted, null) since the last sync, which stores them.
+  final _draftChanges = <String, Message?>{};
+
+  /// Files attached to drafts, by `messageId/partId`.
+  final _files = <String, Uint8List>{};
+
   @override
   ProviderCapabilities get capabilities => const ProviderCapabilities(
       labels: true, categories: true, serverSearch: true, serverDrafts: false, push: true);
@@ -95,6 +102,18 @@ final class DemoProvider implements MailProvider {
       });
       return const SyncResult(fullResync: true);
     }
+    if (_draftChanges.isNotEmpty) {
+      final changes = {..._draftChanges};
+      _draftChanges.clear();
+      await store.transaction(() async {
+        await store.deleteMessages(_id, [for (final e in changes.entries) if (e.value == null) e.key]);
+        await store.upsertMessages(_id, changes.values.nonNulls.toList());
+        // A draft keeps its id when saved again, so its stored body is replaced.
+        for (final m in changes.values.nonNulls) {
+          await store.saveBody(_id, m.id, _bodies[m.id]!);
+        }
+      });
+    }
     if (_pendingArrival) {
       _pendingArrival = false;
       final m = _arrival();
@@ -126,6 +145,7 @@ final class DemoProvider implements MailProvider {
 
   @override
   Future<Uint8List> fetchAttachment(String messageId, AttachmentInfo attachment) async =>
+      _files['$messageId/${attachment.partId}'] ??
       Uint8List.fromList(List.generate(attachment.size.clamp(0, 4096), (i) => i % 256));
 
   @override
@@ -157,14 +177,51 @@ final class DemoProvider implements MailProvider {
   @override
   Future<String> send(OutgoingMessage message) async {
     await Future<void>.delayed(const Duration(milliseconds: 400));
+    if (message.draftId case final draft?) await deleteDraft(draft);
     return 'sent-${_seq++}';
   }
 
   @override
-  Future<String> saveDraft(OutgoingMessage message) async => message.draftId ?? 'draft-${_seq++}';
+  Future<String> saveDraft(OutgoingMessage message) async {
+    final id = message.draftId ?? 'draft-${_seq++}';
+    final m = Message(
+      accountId: _id,
+      id: id,
+      threadId: message.threadId ?? 'td$id',
+      subject: message.subject,
+      from: message.from,
+      to: message.to,
+      cc: message.cc,
+      bcc: message.bcc,
+      date: DateTime.now(),
+      snippet: message.textBody.replaceAll(RegExp(r'\s+'), ' ').trim(),
+      isDraft: true,
+      mailboxIds: const {'DRAFT'},
+      attachments: [
+        for (final (i, a) in message.attachments.indexed)
+          AttachmentInfo(partId: '${i + 2}', filename: a.filename, mimeType: a.mimeType, size: a.bytes.length),
+      ],
+      inReplyTo: message.inReplyTo,
+      references: message.references,
+    );
+    _messages[id] = m;
+    _bodies[id] = MessageBody(text: message.textBody, html: message.htmlBody);
+    for (final (i, a) in message.attachments.indexed) {
+      _files['$id/${i + 2}'] = a.bytes;
+    }
+    _draftChanges[id] = m;
+    return id;
+  }
 
   @override
-  Future<void> deleteDraft(String draftId) async {}
+  Future<void> deleteDraft(String draftId) async {
+    _messages.remove(draftId);
+    _bodies.remove(draftId);
+    _draftChanges[draftId] = null;
+  }
+
+  @override
+  Future<String?> draftIdOf(String messageId) async => _messages[messageId]?.isDraft == true ? messageId : null;
 
   @override
   Future<SearchPage> search(SyncStore store, String query, {String? pageToken}) async {
@@ -300,6 +357,22 @@ final class DemoProvider implements MailProvider {
         out.add(m);
       }
     }
+    // A reply waiting to be finished, and a new message.
+    final tokyo = out.lastWhere((m) => m.subject.contains('Tokyo'));
+    out.add(_draft(
+      replyTo: tokyo,
+      subject: 'Re: ${tokyo.subject}',
+      to: [tokyo.from!],
+      typed: 'Count me in! I could show how the compose window grows out of the button that opened it. '
+          'Ten minutes sounds about right.',
+      date: tokyo.date.add(const Duration(minutes: 35)),
+    ));
+    out.add(_draft(
+      subject: 'Packing list for Lisbon',
+      to: [_people[2]],
+      typed: 'Sunscreen, shoes for all those hills, a light jacket for the evenings and the good camera.',
+      date: now.subtract(const Duration(hours: 5)),
+    ));
     for (var i = 0; i < 46; i++) {
       final (name, email, subject, snippet) = _bulk[i % _bulk.length];
       final id = 'm${_seq++}';
@@ -331,6 +404,35 @@ final class DemoProvider implements MailProvider {
       out.add(m);
     }
     return out;
+  }
+
+  /// A draft written as Plume writes them, quoting [replyTo] when set.
+  Message _draft({
+    Message? replyTo,
+    required String subject,
+    required List<Address> to,
+    required String typed,
+    required DateTime date,
+  }) {
+    final id = 'd${_seq++}';
+    final quote = replyTo == null ? null : replyQuote(replyTo, replyTo.snippet);
+    final m = Message(
+      accountId: _id,
+      id: id,
+      threadId: replyTo?.threadId ?? 'td$id',
+      subject: subject,
+      from: _me,
+      to: to,
+      date: date,
+      snippet: typed,
+      isDraft: true,
+      mailboxIds: const {'DRAFT'},
+      inReplyTo: replyTo?.messageIdHeader,
+      references: [?replyTo?.messageIdHeader],
+    );
+    _messages[id] = m;
+    _bodies[id] = MessageBody(text: mailText(typed, quote: quote), html: mailHtml('<div>$typed</div>', quote: quote));
+    return m;
   }
 
   Message _arrival() {

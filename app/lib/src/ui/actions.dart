@@ -8,6 +8,7 @@ import '../state/mail.dart';
 import '../state/navigation.dart';
 import '../state/services.dart';
 import '../state/settings.dart';
+import 'compose/compose_host.dart';
 import 'toaster.dart';
 
 export 'toaster.dart';
@@ -181,6 +182,33 @@ void openThread(WidgetRef ref, ThreadSummary thread) {
   if (thread.isUnread) {
     unawaited(applyThreadAction(ref, MailAction.markRead, [key], announce: false));
   }
+}
+
+/// Opens the newest draft in [thread] to carry on writing it, growing out of
+/// [origin]. A reply opens with its conversation in the reader.
+Future<void> editDraftIn(WidgetRef ref, ThreadSummary thread, {Rect? origin}) async {
+  final messages = await ref.read(storeProvider).messagesInThreads(thread.accountId, [thread.id]);
+  final drafts = messages.where((m) => m.isDraft).toList()..sort((a, b) => a.date.compareTo(b.date));
+  if (drafts.length < messages.length) openThread(ref, thread);
+  if (drafts.isEmpty) return;
+  await ref.read(composeProvider.notifier).openDraft(drafts.last, origin: origin);
+}
+
+/// Deletes [draft] for good.
+Future<void> discardDraft(WidgetRef ref, Message draft) async {
+  final engine = ref.read(engineProvider);
+  final store = ref.read(storeProvider);
+  try {
+    final id = await engine.draftIdOf(draft.accountId, draft.id);
+    if (id != null) await engine.deleteDraft(draft.accountId, id);
+  } on Object {
+    showSnack('Couldn’t discard the draft');
+    return;
+  }
+  // Gone on the server, so gone here without waiting for the next sync.
+  await store.deleteMessages(draft.accountId, [draft.id]);
+  unawaited(engine.syncAccount(draft.accountId));
+  showSnack('Draft discarded');
 }
 
 /// Moves the open conversation up or down the list (j/k).

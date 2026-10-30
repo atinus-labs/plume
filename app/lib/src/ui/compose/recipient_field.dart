@@ -36,6 +36,8 @@ class RecipientFieldState extends ConsumerState<RecipientField> {
   /// Commits whatever is typed; called before sending.
   void commitPending() => _commit(_controller.text);
 
+  void focus() => _focus.requestFocus();
+
   @override
   void initState() {
     super.initState();

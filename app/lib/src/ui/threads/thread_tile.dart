@@ -11,6 +11,7 @@ import '../../state/avatars.dart';
 import '../../state/navigation.dart';
 import '../actions.dart';
 import '../common/format.dart';
+import '../compose/compose_host.dart';
 import 'thread_menu.dart';
 
 /// One conversation in the message list.
@@ -150,6 +151,10 @@ class _ThreadTileState extends ConsumerState<ThreadTile> {
               onTap: () {
                 if (selectionMode) {
                   ref.read(selectionProvider.notifier).toggle(thread.key);
+                } else if (thread.draftCount > 0 && ref.read(viewProvider).kind == ViewKind.drafts) {
+                  // In Drafts, a draft opens to be written; the window grows
+                  // out of its row.
+                  unawaited(editDraftIn(ref, thread, origin: globalRectOf(context)));
                 } else {
                   openThread(ref, thread);
                 }

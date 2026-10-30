@@ -116,6 +116,11 @@ abstract interface class MailProvider {
   Future<String> saveDraft(OutgoingMessage message);
   Future<void> deleteDraft(String draftId);
 
+  /// The draft id of the draft stored as message [messageId], so that a
+  /// draft found in a mailbox can be edited further. Null when the message
+  /// is not a draft (any more).
+  Future<String?> draftIdOf(String messageId);
+
   /// Server-side search using the provider's query syntax. Matching threads
   /// are written to the store before returning.
   Future<SearchPage> search(SyncStore store, String query, {String? pageToken});

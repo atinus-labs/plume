@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_selector/file_selector.dart';
@@ -9,8 +10,9 @@ import 'package:plume_core/plume_core.dart';
 import 'package:plume_design/plume_design.dart';
 import 'package:url_launcher/url_launcher.dart';
 
-import '../../state/services.dart';
 import '../../state/avatars.dart';
+import '../../state/mail.dart';
+import '../../state/services.dart';
 import '../actions.dart';
 import '../common/format.dart';
 import '../compose/compose_host.dart';
@@ -245,6 +247,149 @@ class _MessageCardState extends ConsumerState<MessageCard> {
 /// list) drop the sender's address and the indent under the avatar, leaving
 /// the width to the name and the message.
 const _narrowCard = 520.0;
+
+/// A draft in a conversation: who it is for and how it starts. Clicking it
+/// opens it to carry on writing, in a window that grows out of the card.
+class DraftCard extends ConsumerStatefulWidget {
+  const DraftCard({
+    super.key,
+    required this.message,
+    required this.index,
+    required this.count,
+    required this.myEmail,
+  });
+
+  final Message message;
+  final int index;
+  final int count;
+  final String myEmail;
+
+  @override
+  ConsumerState<DraftCard> createState() => _DraftCardState();
+}
+
+class _DraftCardState extends ConsumerState<DraftCard> {
+  bool _opening = false;
+
+  Future<void> _edit() async {
+    if (_opening) return;
+    setState(() => _opening = true);
+    try {
+      await ref.read(composeProvider.notifier).openDraft(widget.message, origin: globalRectOf(context));
+    } finally {
+      if (mounted) setState(() => _opening = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    final m = widget.message;
+    final from = m.from;
+    final index = widget.index;
+    final count = widget.count;
+    final muted = theme.textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant);
+    final recipients = [...m.to, ...m.cc, ...m.bcc];
+    String nameOf(Address a) => a.email.toLowerCase() == widget.myEmail.toLowerCase() ? 'me' : a.shortName;
+    void edit() => unawaited(_edit());
+    // Fetched ahead, so the draft opens without waiting for it.
+    ref.watch(bodyProvider((accountId: m.accountId, messageId: m.id)));
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 3),
+      child: Material(
+        color: messageCardColor(scheme),
+        shape: RoundedRectangleBorder(borderRadius: groupedRadius(index, count, outer: Corners.extraLarge, inner: Corners.small)),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: edit,
+          child: LayoutBuilder(builder: (context, constraints) {
+            // The preview and buttons line up with the label, as a message's
+            // body lines up with its sender.
+            final indent = constraints.maxWidth < _narrowCard ? 0.0 : 54.0;
+            return Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 12, 14),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      MorphAvatar(
+                        name: from?.displayName ?? '?',
+                        colorKey: from?.email ?? m.id,
+                        image: from?.email != null ? ref.watch(senderAvatarProvider(from!.email)).value : null,
+                        size: 40,
+                      ),
+                      const SizedBox(width: 14),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text('Draft', style: theme.textTheme.titleSmallEmphasized.copyWith(color: scheme.error)),
+                            const SizedBox(height: 2),
+                            Text(
+                              recipients.isEmpty ? 'No recipients yet' : 'to ${recipients.map(nameOf).join(', ')}',
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: muted,
+                            ),
+                          ],
+                        ),
+                      ),
+                      Tooltip(
+                        message: fullDate(m.date),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          child: Text(listDate(m.date), style: theme.textTheme.labelMedium?.copyWith(color: scheme.onSurfaceVariant, fontFeatures: const [FontFeature.tabularFigures()])),
+                        ),
+                      ),
+                    ],
+                  ),
+                  if (m.snippet.isNotEmpty)
+                    Padding(
+                      padding: EdgeInsets.only(left: indent, top: 12, right: 8),
+                      child: Text(m.snippet, maxLines: 3, overflow: TextOverflow.ellipsis, style: theme.textTheme.bodyMedium),
+                    ),
+                  Padding(
+                    padding: EdgeInsets.only(left: indent, top: 12),
+                    child: Wrap(
+                      spacing: 8,
+                      runSpacing: 4,
+                      children: [
+                        FilledButton.tonalIcon(
+                          onPressed: edit,
+                          // Opening waits for the draft when it was not
+                          // fetched yet.
+                          icon: _opening
+                              ? const SizedBox.square(
+                                  dimension: 20,
+                                  child: OverflowBox(
+                                    maxWidth: 28,
+                                    maxHeight: 28,
+                                    child: LoadingIndicator(size: 28, delay: Duration(milliseconds: 150)),
+                                  ),
+                                )
+                              : const Icon(Symbols.edit_rounded, size: 20),
+                          label: const Text('Edit'),
+                        ),
+                        TextButton.icon(
+                          onPressed: () => unawaited(discardDraft(ref, m)),
+                          icon: const Icon(Symbols.delete_rounded, size: 20),
+                          label: const Text('Discard'),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
+        ),
+      ),
+    );
+  }
+}
 
 class _DetailsTable extends StatelessWidget {
   const _DetailsTable({required this.message, required this.indent});

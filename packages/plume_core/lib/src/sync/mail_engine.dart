@@ -298,6 +298,9 @@ final class MailEngine {
   Future<void> deleteDraft(String accountId, String draftId) =>
       _requireRuntime(accountId).provider.deleteDraft(draftId);
 
+  Future<String?> draftIdOf(String accountId, String messageId) =>
+      _requireRuntime(accountId).provider.draftIdOf(messageId);
+
   // Content ------------------------------------------------------------------
 
   /// Makes sure message bodies are cached locally, downloading if needed.

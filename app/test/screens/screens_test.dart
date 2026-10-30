@@ -209,6 +209,17 @@ final _scenarios = <String, List<Step>>{
       await t.tap(find.byTooltip('Text colour'), kind: PointerDeviceKind.mouse);
     },
   ],
+  // A reply drafted earlier, waiting at the end of its conversation.
+  'draft_in_thread': [
+    (t, c) async => openThread(c, _thread(c, 'Tokyo')),
+  ],
+  'drafts': [
+    (t, c) async => c.read(viewProvider.notifier).show(const MailView(ViewKind.drafts)),
+  ],
+  'draft_edit': [
+    (t, c) async => openThread(c, _thread(c, 'Tokyo')),
+    (t, c) async => t.tap(find.widgetWithText(FilledButton, 'Edit'), kind: PointerDeviceKind.mouse),
+  ],
   'add_account': [_openAddAccount],
   'server_form_gmail': [
     _openServerForm,
@@ -383,6 +394,13 @@ final _motions = <String, _Motion>{
     action: (t, c) async => c.read(composeProvider.notifier).close(c.read(composeProvider).last.id),
     at: const [40, 100, 170, 260],
     crop: _composeArea,
+  ),
+  // A draft grows out of its card to be written further.
+  'draft_edit': _Motion(
+    setup: [(t, c) async => openThread(c, _thread(c, 'Tokyo'))],
+    action: (t, c) async => t.tap(find.widgetWithText(FilledButton, 'Edit'), kind: PointerDeviceKind.mouse),
+    at: const [40, 100, 170, 260],
+    crop: (w) => Rect.fromLTWH(w.width - 900, 0, 900, w.height),
   ),
   // The compose button grows into a full-window message.
   'compose_phone': _Motion(

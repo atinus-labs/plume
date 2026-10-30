@@ -223,7 +223,8 @@ class _ThreadBodyState extends ConsumerState<_ThreadBody> {
             !m.hidden &&
             !const {MailboxRole.category, MailboxRole.important, MailboxRole.sent, MailboxRole.drafts}.contains(m.role))
         .toList();
-    final messages = visibleMessages(thread);
+    final messages = thread.messages;
+    final latest = latestMessage(thread);
     final folders = ref.watch(usesFoldersProvider(summary.accountId));
     final subject = summary.subject.isEmpty ? '(no subject)' : summary.subject;
 
@@ -288,13 +289,15 @@ class _ThreadBodyState extends ConsumerState<_ThreadBody> {
               Presence(
                 key: ValueKey(m.id),
                 appear: _unfolded && _folded.contains(m.id),
-                child: MessageCard(
-                  message: m,
-                  index: index++,
-                  count: cardCount,
-                  myEmail: myEmail,
-                  initiallyExpanded: m == messages.last || !m.isRead,
-                ),
+                child: m.isDraft
+                    ? DraftCard(message: m, index: index++, count: cardCount, myEmail: myEmail)
+                    : MessageCard(
+                        message: m,
+                        index: index++,
+                        count: cardCount,
+                        myEmail: myEmail,
+                        initiallyExpanded: m == latest || !m.isRead,
+                      ),
               ),
             ],
           ],
@@ -304,9 +307,9 @@ class _ThreadBodyState extends ConsumerState<_ThreadBody> {
   }
 }
 
-/// The messages shown for [thread]: drafts only when there is nothing else.
-List<Message> visibleMessages(ThreadDetail thread) =>
-    thread.messages.where((m) => !m.isDraft || thread.messages.length == 1).toList();
+/// The newest message in [thread] that is not a draft: the one a reply
+/// answers. Null for a conversation of drafts only.
+Message? latestMessage(ThreadDetail thread) => thread.messages.where((m) => !m.isDraft).lastOrNull;
 
 /// The reader's top toolbar. It stays in place while conversations change,
 /// showing the last one until the next has loaded.
@@ -473,7 +476,9 @@ class _ReplyBarState extends ConsumerState<_ReplyBar> {
   @override
   Widget build(BuildContext context) {
     final thread = ref.watch(threadDetailProvider(widget.threadKey)).value;
-    final latest = _latest = (thread == null ? null : visibleMessages(thread).lastOrNull) ?? _latest;
+    // A conversation of drafts only has nothing to reply to; its drafts
+    // carry their own Edit button.
+    final latest = _latest = thread == null ? _latest : latestMessage(thread);
     if (latest == null) return const SizedBox.shrink();
     return ValueListenableBuilder(
       valueListenable: widget.chrome.replyBar,
