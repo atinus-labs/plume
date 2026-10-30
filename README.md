@@ -15,7 +15,7 @@ A fast mail client for the Linux desktop, built with Flutter and Material 3 Expr
 
 - Unified inbox across accounts, with Gmail categories
 - Gmail API or any IMAP/SMTP server, with automatic server discovery
-- Local SQLite cache, optimistic actions that replay when back online, and offline reading
+- Local SQLite cache, optimistic actions that replay when back online, offline reading, and drafts written offline that upload when you reconnect
 - Push notifications via IMAP IDLE, with Open, Archive and Mark as read actions
 - Tray icon with unread count; closing the window keeps Plume running
 - HTML mail rendered by WebKit, as in other mail apps; simple mail follows the app's light or dark theme

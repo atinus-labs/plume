@@ -14,7 +14,8 @@ import 'backoff.dart';
 final _log = Logger('plume.engine');
 
 /// Drives one account: sync passes, the real-time change stream, the
-/// operation queue and the outbox. Created and owned by `MailEngine`.
+/// operation queue, the outbox and the drafts kept on this device. Created
+/// and owned by `MailEngine`.
 final class AccountRuntime {
   AccountRuntime({
     required this.account,
@@ -45,10 +46,12 @@ final class AccountRuntime {
   Timer? _retryTimer;
   Timer? _opsTimer;
   Timer? _outboxTimer;
+  Timer? _draftsTimer;
   StreamSubscription<void>? _push;
   Timer? _pushRetry;
   final _syncBackoff = Backoff();
   final _pushBackoff = Backoff(initial: const Duration(seconds: 5), max: const Duration(minutes: 10));
+  final _draftsBackoff = Backoff(initial: const Duration(seconds: 5));
 
   Future<void>? _currentSync;
   bool _syncAgain = false;
@@ -56,6 +59,8 @@ final class AccountRuntime {
   bool _opsAgain = false;
   bool _outboxRunning = false;
   bool _outboxAgain = false;
+  Future<void>? _currentDrafts;
+  bool _draftsAgain = false;
   bool _disposed = false;
   bool _paused = false;
 
@@ -69,6 +74,7 @@ final class AccountRuntime {
     _schedulePeriodic();
     kickOperations();
     kickOutbox();
+    kickDrafts();
   }
 
   Future<void> _markInitialState() async {
@@ -116,10 +122,12 @@ final class AccountRuntime {
   Future<void> _syncOnce() async {
     _retryTimer?.cancel();
     _setStatus(_status.copyWith(phase: SyncPhase.syncing));
+    final started = DateTime.now();
     try {
       final result = await provider.sync(store);
       if (_disposed) return;
       await _reapplyPending();
+      await store.settleLocalDrafts(id, uploadedBefore: started);
       _syncBackoff.reset();
       if (!_status.initialSyncDone) await store.writeState(id, _initialDoneKey, '1');
       _setStatus(_status.copyWith(
@@ -132,6 +140,8 @@ final class AccountRuntime {
       unawaited(_prefetchBodies());
       // Server state may have changed under queued operations; let them run.
       kickOperations();
+      // And the server is reachable again, if it was not.
+      if (_draftsTimer?.isActive ?? false) kickDrafts();
     } on AuthException catch (e) {
       _enterNeedsReauth(e);
     } on MailException catch (e) {
@@ -271,6 +281,7 @@ final class AccountRuntime {
     unawaited(requestSync());
     kickOperations();
     kickOutbox();
+    kickDrafts();
   }
 
   // Operations ---------------------------------------------------------------
@@ -388,6 +399,71 @@ final class AccountRuntime {
     }
   }
 
+  // Drafts -------------------------------------------------------------------
+
+  void kickDrafts() => unawaited(uploadDrafts());
+
+  /// Uploads the drafts saved on this device that the server does not have
+  /// as last written, and deletes the server drafts of discarded ones. A
+  /// call during a pass is answered by one more pass, which the returned
+  /// future includes. Failures leave the drafts here to try again later.
+  Future<void> uploadDrafts() {
+    if (_disposed || _paused) return Future.value();
+    if (_currentDrafts != null) {
+      _draftsAgain = true;
+      return _currentDrafts!;
+    }
+    final future = _drainDrafts().whenComplete(() => _currentDrafts = null);
+    _currentDrafts = future;
+    return future;
+  }
+
+  Future<void> _drainDrafts() async {
+    _draftsTimer?.cancel();
+    var deleted = false;
+    var failed = false;
+    try {
+      do {
+        _draftsAgain = false;
+        for (final draft in await store.localDrafts(id)) {
+          if (_disposed || _paused) return;
+          final message = draft.message;
+          if (message != null && draft.isUploaded) continue;
+          try {
+            if (message == null) {
+              if (draft.draftId case final draftId?) await provider.deleteDraft(draftId);
+              await store.deleteLocalDraft(draft.id);
+              deleted = true;
+              continue;
+            }
+            final draftId = await provider.saveDraft(message);
+            final kept = await store.markLocalDraftUploaded(draft.id, revision: draft.revision, draftId: draftId);
+            // Sent while on its way: a draft it made is left over.
+            if (!kept && draftId != draft.draftId) await provider.deleteDraft(draftId);
+          } on AuthException catch (e) {
+            _enterNeedsReauth(e);
+            return;
+          } on Object catch (e) {
+            _log.info('Draft ${draft.id} of ${account.email} stays on this device for now: $e');
+            failed = true;
+            // Offline, most likely; the others would fail too.
+            if (e is TransientException) break;
+          }
+        }
+      } while (_draftsAgain && !_disposed && !_paused);
+    } on Object catch (e, st) {
+      _log.severe('Could not go through the drafts of ${account.email}', e, st);
+      failed = true;
+    }
+    if (_disposed || _paused) return;
+    if (failed) {
+      _draftsTimer = Timer(_draftsBackoff.next(), kickDrafts);
+    } else {
+      _draftsBackoff.reset();
+    }
+    if (deleted) unawaited(requestSync());
+  }
+
   // Lifecycle ----------------------------------------------------------------
 
   void _enterNeedsReauth(AuthException e) {
@@ -411,6 +487,7 @@ final class AccountRuntime {
     _retryTimer?.cancel();
     _opsTimer?.cancel();
     _outboxTimer?.cancel();
+    _draftsTimer?.cancel();
     _pushRetry?.cancel();
   }
 

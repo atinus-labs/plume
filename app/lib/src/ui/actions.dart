@@ -199,15 +199,17 @@ Future<void> discardDraft(WidgetRef ref, Message draft) async {
   final engine = ref.read(engineProvider);
   final store = ref.read(storeProvider);
   try {
-    final id = await engine.draftIdOf(draft.accountId, draft.id);
-    if (id != null) await engine.deleteDraft(draft.accountId, id);
+    if (LocalDraft.idOf(draft.id) case final localId?) {
+      await engine.discardDraft(draft.accountId, localId: localId);
+    } else if (await engine.draftIdOf(draft.accountId, draft.id) case final draftId?) {
+      await engine.discardDraft(draft.accountId, draftId: draftId);
+    }
   } on Object {
     showSnack('Couldn’t discard the draft');
     return;
   }
-  // Gone on the server, so gone here without waiting for the next sync.
+  // Going on the server, so gone here without waiting for the next sync.
   await store.deleteMessages(draft.accountId, [draft.id]);
-  unawaited(engine.syncAccount(draft.accountId));
   showSnack('Draft discarded');
 }
 

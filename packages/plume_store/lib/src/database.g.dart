@@ -5954,6 +5954,513 @@ class OutboxCompanion extends UpdateCompanion<OutboxRow> {
   }
 }
 
+class LocalDrafts extends Table with TableInfo<LocalDrafts, LocalDraftRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  LocalDrafts(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _idMeta = const VerificationMeta('id');
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    $customConstraints: 'NOT NULL PRIMARY KEY AUTOINCREMENT',
+  );
+  static const VerificationMeta _accountIdMeta = const VerificationMeta(
+    'accountId',
+  );
+  late final GeneratedColumn<String> accountId = GeneratedColumn<String>(
+    'account_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL REFERENCES accounts(id)ON DELETE CASCADE',
+  );
+  static const VerificationMeta _payloadMeta = const VerificationMeta(
+    'payload',
+  );
+  late final GeneratedColumn<String> payload = GeneratedColumn<String>(
+    'payload',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: '',
+  );
+  static const VerificationMeta _draftIdMeta = const VerificationMeta(
+    'draftId',
+  );
+  late final GeneratedColumn<String> draftId = GeneratedColumn<String>(
+    'draft_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: '',
+  );
+  static const VerificationMeta _revisionMeta = const VerificationMeta(
+    'revision',
+  );
+  late final GeneratedColumn<int> revision = GeneratedColumn<int>(
+    'revision',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    $customConstraints: 'NOT NULL DEFAULT 1',
+    defaultValue: const CustomExpression('1'),
+  );
+  static const VerificationMeta _uploadedRevisionMeta = const VerificationMeta(
+    'uploadedRevision',
+  );
+  late final GeneratedColumn<int> uploadedRevision = GeneratedColumn<int>(
+    'uploaded_revision',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    $customConstraints: 'NOT NULL DEFAULT 0',
+    defaultValue: const CustomExpression('0'),
+  );
+  static const VerificationMeta _savedAtMeta = const VerificationMeta(
+    'savedAt',
+  );
+  late final GeneratedColumn<int> savedAt = GeneratedColumn<int>(
+    'saved_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  static const VerificationMeta _uploadedAtMeta = const VerificationMeta(
+    'uploadedAt',
+  );
+  late final GeneratedColumn<int> uploadedAt = GeneratedColumn<int>(
+    'uploaded_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    $customConstraints: '',
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    accountId,
+    payload,
+    draftId,
+    revision,
+    uploadedRevision,
+    savedAt,
+    uploadedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'local_drafts';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<LocalDraftRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('id')) {
+      context.handle(_idMeta, id.isAcceptableOrUnknown(data['id']!, _idMeta));
+    }
+    if (data.containsKey('account_id')) {
+      context.handle(
+        _accountIdMeta,
+        accountId.isAcceptableOrUnknown(data['account_id']!, _accountIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_accountIdMeta);
+    }
+    if (data.containsKey('payload')) {
+      context.handle(
+        _payloadMeta,
+        payload.isAcceptableOrUnknown(data['payload']!, _payloadMeta),
+      );
+    }
+    if (data.containsKey('draft_id')) {
+      context.handle(
+        _draftIdMeta,
+        draftId.isAcceptableOrUnknown(data['draft_id']!, _draftIdMeta),
+      );
+    }
+    if (data.containsKey('revision')) {
+      context.handle(
+        _revisionMeta,
+        revision.isAcceptableOrUnknown(data['revision']!, _revisionMeta),
+      );
+    }
+    if (data.containsKey('uploaded_revision')) {
+      context.handle(
+        _uploadedRevisionMeta,
+        uploadedRevision.isAcceptableOrUnknown(
+          data['uploaded_revision']!,
+          _uploadedRevisionMeta,
+        ),
+      );
+    }
+    if (data.containsKey('saved_at')) {
+      context.handle(
+        _savedAtMeta,
+        savedAt.isAcceptableOrUnknown(data['saved_at']!, _savedAtMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_savedAtMeta);
+    }
+    if (data.containsKey('uploaded_at')) {
+      context.handle(
+        _uploadedAtMeta,
+        uploadedAt.isAcceptableOrUnknown(data['uploaded_at']!, _uploadedAtMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  LocalDraftRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return LocalDraftRow(
+      id: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}id'],
+      )!,
+      accountId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}account_id'],
+      )!,
+      payload: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}payload'],
+      ),
+      draftId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}draft_id'],
+      ),
+      revision: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}revision'],
+      )!,
+      uploadedRevision: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}uploaded_revision'],
+      )!,
+      savedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}saved_at'],
+      )!,
+      uploadedAt: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}uploaded_at'],
+      ),
+    );
+  }
+
+  @override
+  LocalDrafts createAlias(String alias) {
+    return LocalDrafts(attachedDatabase, alias);
+  }
+
+  @override
+  bool get dontWriteConstraints => true;
+}
+
+class LocalDraftRow extends DataClass implements Insertable<LocalDraftRow> {
+  final int id;
+  final String accountId;
+  final String? payload;
+  final String? draftId;
+  final int revision;
+  final int uploadedRevision;
+  final int savedAt;
+  final int? uploadedAt;
+  const LocalDraftRow({
+    required this.id,
+    required this.accountId,
+    this.payload,
+    this.draftId,
+    required this.revision,
+    required this.uploadedRevision,
+    required this.savedAt,
+    this.uploadedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['id'] = Variable<int>(id);
+    map['account_id'] = Variable<String>(accountId);
+    if (!nullToAbsent || payload != null) {
+      map['payload'] = Variable<String>(payload);
+    }
+    if (!nullToAbsent || draftId != null) {
+      map['draft_id'] = Variable<String>(draftId);
+    }
+    map['revision'] = Variable<int>(revision);
+    map['uploaded_revision'] = Variable<int>(uploadedRevision);
+    map['saved_at'] = Variable<int>(savedAt);
+    if (!nullToAbsent || uploadedAt != null) {
+      map['uploaded_at'] = Variable<int>(uploadedAt);
+    }
+    return map;
+  }
+
+  LocalDraftsCompanion toCompanion(bool nullToAbsent) {
+    return LocalDraftsCompanion(
+      id: Value(id),
+      accountId: Value(accountId),
+      payload: payload == null && nullToAbsent
+          ? const Value.absent()
+          : Value(payload),
+      draftId: draftId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(draftId),
+      revision: Value(revision),
+      uploadedRevision: Value(uploadedRevision),
+      savedAt: Value(savedAt),
+      uploadedAt: uploadedAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(uploadedAt),
+    );
+  }
+
+  factory LocalDraftRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return LocalDraftRow(
+      id: serializer.fromJson<int>(json['id']),
+      accountId: serializer.fromJson<String>(json['account_id']),
+      payload: serializer.fromJson<String?>(json['payload']),
+      draftId: serializer.fromJson<String?>(json['draft_id']),
+      revision: serializer.fromJson<int>(json['revision']),
+      uploadedRevision: serializer.fromJson<int>(json['uploaded_revision']),
+      savedAt: serializer.fromJson<int>(json['saved_at']),
+      uploadedAt: serializer.fromJson<int?>(json['uploaded_at']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'id': serializer.toJson<int>(id),
+      'account_id': serializer.toJson<String>(accountId),
+      'payload': serializer.toJson<String?>(payload),
+      'draft_id': serializer.toJson<String?>(draftId),
+      'revision': serializer.toJson<int>(revision),
+      'uploaded_revision': serializer.toJson<int>(uploadedRevision),
+      'saved_at': serializer.toJson<int>(savedAt),
+      'uploaded_at': serializer.toJson<int?>(uploadedAt),
+    };
+  }
+
+  LocalDraftRow copyWith({
+    int? id,
+    String? accountId,
+    Value<String?> payload = const Value.absent(),
+    Value<String?> draftId = const Value.absent(),
+    int? revision,
+    int? uploadedRevision,
+    int? savedAt,
+    Value<int?> uploadedAt = const Value.absent(),
+  }) => LocalDraftRow(
+    id: id ?? this.id,
+    accountId: accountId ?? this.accountId,
+    payload: payload.present ? payload.value : this.payload,
+    draftId: draftId.present ? draftId.value : this.draftId,
+    revision: revision ?? this.revision,
+    uploadedRevision: uploadedRevision ?? this.uploadedRevision,
+    savedAt: savedAt ?? this.savedAt,
+    uploadedAt: uploadedAt.present ? uploadedAt.value : this.uploadedAt,
+  );
+  LocalDraftRow copyWithCompanion(LocalDraftsCompanion data) {
+    return LocalDraftRow(
+      id: data.id.present ? data.id.value : this.id,
+      accountId: data.accountId.present ? data.accountId.value : this.accountId,
+      payload: data.payload.present ? data.payload.value : this.payload,
+      draftId: data.draftId.present ? data.draftId.value : this.draftId,
+      revision: data.revision.present ? data.revision.value : this.revision,
+      uploadedRevision: data.uploadedRevision.present
+          ? data.uploadedRevision.value
+          : this.uploadedRevision,
+      savedAt: data.savedAt.present ? data.savedAt.value : this.savedAt,
+      uploadedAt: data.uploadedAt.present
+          ? data.uploadedAt.value
+          : this.uploadedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalDraftRow(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('payload: $payload, ')
+          ..write('draftId: $draftId, ')
+          ..write('revision: $revision, ')
+          ..write('uploadedRevision: $uploadedRevision, ')
+          ..write('savedAt: $savedAt, ')
+          ..write('uploadedAt: $uploadedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    id,
+    accountId,
+    payload,
+    draftId,
+    revision,
+    uploadedRevision,
+    savedAt,
+    uploadedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is LocalDraftRow &&
+          other.id == this.id &&
+          other.accountId == this.accountId &&
+          other.payload == this.payload &&
+          other.draftId == this.draftId &&
+          other.revision == this.revision &&
+          other.uploadedRevision == this.uploadedRevision &&
+          other.savedAt == this.savedAt &&
+          other.uploadedAt == this.uploadedAt);
+}
+
+class LocalDraftsCompanion extends UpdateCompanion<LocalDraftRow> {
+  final Value<int> id;
+  final Value<String> accountId;
+  final Value<String?> payload;
+  final Value<String?> draftId;
+  final Value<int> revision;
+  final Value<int> uploadedRevision;
+  final Value<int> savedAt;
+  final Value<int?> uploadedAt;
+  const LocalDraftsCompanion({
+    this.id = const Value.absent(),
+    this.accountId = const Value.absent(),
+    this.payload = const Value.absent(),
+    this.draftId = const Value.absent(),
+    this.revision = const Value.absent(),
+    this.uploadedRevision = const Value.absent(),
+    this.savedAt = const Value.absent(),
+    this.uploadedAt = const Value.absent(),
+  });
+  LocalDraftsCompanion.insert({
+    this.id = const Value.absent(),
+    required String accountId,
+    this.payload = const Value.absent(),
+    this.draftId = const Value.absent(),
+    this.revision = const Value.absent(),
+    this.uploadedRevision = const Value.absent(),
+    required int savedAt,
+    this.uploadedAt = const Value.absent(),
+  }) : accountId = Value(accountId),
+       savedAt = Value(savedAt);
+  static Insertable<LocalDraftRow> custom({
+    Expression<int>? id,
+    Expression<String>? accountId,
+    Expression<String>? payload,
+    Expression<String>? draftId,
+    Expression<int>? revision,
+    Expression<int>? uploadedRevision,
+    Expression<int>? savedAt,
+    Expression<int>? uploadedAt,
+  }) {
+    return RawValuesInsertable({
+      if (id != null) 'id': id,
+      if (accountId != null) 'account_id': accountId,
+      if (payload != null) 'payload': payload,
+      if (draftId != null) 'draft_id': draftId,
+      if (revision != null) 'revision': revision,
+      if (uploadedRevision != null) 'uploaded_revision': uploadedRevision,
+      if (savedAt != null) 'saved_at': savedAt,
+      if (uploadedAt != null) 'uploaded_at': uploadedAt,
+    });
+  }
+
+  LocalDraftsCompanion copyWith({
+    Value<int>? id,
+    Value<String>? accountId,
+    Value<String?>? payload,
+    Value<String?>? draftId,
+    Value<int>? revision,
+    Value<int>? uploadedRevision,
+    Value<int>? savedAt,
+    Value<int?>? uploadedAt,
+  }) {
+    return LocalDraftsCompanion(
+      id: id ?? this.id,
+      accountId: accountId ?? this.accountId,
+      payload: payload ?? this.payload,
+      draftId: draftId ?? this.draftId,
+      revision: revision ?? this.revision,
+      uploadedRevision: uploadedRevision ?? this.uploadedRevision,
+      savedAt: savedAt ?? this.savedAt,
+      uploadedAt: uploadedAt ?? this.uploadedAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (id.present) {
+      map['id'] = Variable<int>(id.value);
+    }
+    if (accountId.present) {
+      map['account_id'] = Variable<String>(accountId.value);
+    }
+    if (payload.present) {
+      map['payload'] = Variable<String>(payload.value);
+    }
+    if (draftId.present) {
+      map['draft_id'] = Variable<String>(draftId.value);
+    }
+    if (revision.present) {
+      map['revision'] = Variable<int>(revision.value);
+    }
+    if (uploadedRevision.present) {
+      map['uploaded_revision'] = Variable<int>(uploadedRevision.value);
+    }
+    if (savedAt.present) {
+      map['saved_at'] = Variable<int>(savedAt.value);
+    }
+    if (uploadedAt.present) {
+      map['uploaded_at'] = Variable<int>(uploadedAt.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('LocalDraftsCompanion(')
+          ..write('id: $id, ')
+          ..write('accountId: $accountId, ')
+          ..write('payload: $payload, ')
+          ..write('draftId: $draftId, ')
+          ..write('revision: $revision, ')
+          ..write('uploadedRevision: $uploadedRevision, ')
+          ..write('savedAt: $savedAt, ')
+          ..write('uploadedAt: $uploadedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class Settings extends Table with TableInfo<Settings, SettingRow> {
   @override
   final GeneratedDatabase attachedDatabase;
@@ -6571,6 +7078,11 @@ abstract class _$PlumeDatabase extends GeneratedDatabase {
     'outbox_by_account',
     'CREATE INDEX outbox_by_account ON outbox (account_id)',
   );
+  late final LocalDrafts localDrafts = LocalDrafts(this);
+  late final Index localDraftsByAccount = Index(
+    'local_drafts_by_account',
+    'CREATE INDEX local_drafts_by_account ON local_drafts (account_id, id)',
+  );
   late final Settings settings = Settings(this);
   late final MessageFts messageFts = MessageFts(this);
   @override
@@ -6599,6 +7111,8 @@ abstract class _$PlumeDatabase extends GeneratedDatabase {
     pendingOpsByAccount,
     outbox,
     outboxByAccount,
+    localDrafts,
+    localDraftsByAccount,
     settings,
     messageFts,
   ];
@@ -6673,6 +7187,13 @@ abstract class _$PlumeDatabase extends GeneratedDatabase {
         limitUpdateKind: UpdateKind.delete,
       ),
       result: [TableUpdate('outbox', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'accounts',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('local_drafts', kind: UpdateKind.delete)],
     ),
   ]);
 }
@@ -6816,6 +7337,24 @@ final class $AccountsReferences
     ).filter((f) => f.accountId.id.sqlEquals($_itemColumn<String>('id')!));
 
     final cache = $_typedResult.readTableOrNull(_outboxRefsTable($_db));
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+
+  static MultiTypedResultKey<LocalDrafts, List<LocalDraftRow>>
+  _localDraftsRefsTable(_$PlumeDatabase db) => MultiTypedResultKey.fromTable(
+    db.localDrafts,
+    aliasName: 'accounts__id__local_drafts__account_id',
+  );
+
+  $LocalDraftsProcessedTableManager get localDraftsRefs {
+    final manager = $LocalDraftsTableManager(
+      $_db,
+      $_db.localDrafts,
+    ).filter((f) => f.accountId.id.sqlEquals($_itemColumn<String>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(_localDraftsRefsTable($_db));
     return ProcessedTableManager(
       manager.$state.copyWith(prefetchedData: cache),
     );
@@ -7021,6 +7560,31 @@ class $AccountsFilterComposer extends Composer<_$PlumeDatabase, Accounts> {
           }) => $OutboxFilterComposer(
             $db: $db,
             $table: $db.outbox,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
+  Expression<bool> localDraftsRefs(
+    Expression<bool> Function($LocalDraftsFilterComposer f) f,
+  ) {
+    final $LocalDraftsFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.localDrafts,
+      getReferencedColumn: (t) => t.accountId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $LocalDraftsFilterComposer(
+            $db: $db,
+            $table: $db.localDrafts,
             $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
             joinBuilder: joinBuilder,
             $removeJoinBuilderFromRootComposer:
@@ -7281,6 +7845,31 @@ class $AccountsAnnotationComposer extends Composer<_$PlumeDatabase, Accounts> {
     );
     return f(composer);
   }
+
+  Expression<T> localDraftsRefs<T extends Object>(
+    Expression<T> Function($LocalDraftsAnnotationComposer a) f,
+  ) {
+    final $LocalDraftsAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.localDrafts,
+      getReferencedColumn: (t) => t.accountId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $LocalDraftsAnnotationComposer(
+            $db: $db,
+            $table: $db.localDrafts,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
 }
 
 class $AccountsTableManager
@@ -7303,6 +7892,7 @@ class $AccountsTableManager
             bool syncStateRefs,
             bool pendingOpsRefs,
             bool outboxRefs,
+            bool localDraftsRefs,
           })
         > {
   $AccountsTableManager(_$PlumeDatabase db, Accounts table)
@@ -7384,6 +7974,7 @@ class $AccountsTableManager
                 syncStateRefs = false,
                 pendingOpsRefs = false,
                 outboxRefs = false,
+                localDraftsRefs = false,
               }) {
                 return PrefetchHooks(
                   db: db,
@@ -7394,6 +7985,7 @@ class $AccountsTableManager
                     if (syncStateRefs) db.syncState,
                     if (pendingOpsRefs) db.pendingOps,
                     if (outboxRefs) db.outbox,
+                    if (localDraftsRefs) db.localDrafts,
                   ],
                   addJoins: null,
                   getPrefetchedDataCallback: (items) async {
@@ -7495,6 +8087,25 @@ class $AccountsTableManager
                           referencedColumn: 'account_id',
                           typedResults: items,
                         ),
+                      if (localDraftsRefs)
+                        await $_getPrefetchedDataByColumns<
+                          AccountRow,
+                          Accounts,
+                          LocalDraftRow,
+                          LocalDrafts
+                        >(
+                          currentTable: table,
+                          referencedTable: $AccountsReferences
+                              ._localDraftsRefsTable(db),
+                          managerFromTypedResult: (p0) => $AccountsReferences(
+                            db,
+                            table,
+                            p0,
+                          ).localDraftsRefs,
+                          currentColumn: 'id',
+                          referencedColumn: 'account_id',
+                          typedResults: items,
+                        ),
                     ];
                   },
                 );
@@ -7522,6 +8133,7 @@ typedef $AccountsProcessedTableManager =
         bool syncStateRefs,
         bool pendingOpsRefs,
         bool outboxRefs,
+        bool localDraftsRefs,
       })
     >;
 typedef $MailboxesCreateCompanionBuilder = MailboxesCompanion Function({
@@ -10916,6 +11528,375 @@ typedef $OutboxProcessedTableManager =
       OutboxRow,
       PrefetchHooks Function({bool accountId})
     >;
+typedef $LocalDraftsCreateCompanionBuilder = LocalDraftsCompanion Function({
+  Value<int> id,
+  required String accountId,
+  Value<String?> payload,
+  Value<String?> draftId,
+  Value<int> revision,
+  Value<int> uploadedRevision,
+  required int savedAt,
+  Value<int?> uploadedAt,
+});
+typedef $LocalDraftsUpdateCompanionBuilder = LocalDraftsCompanion Function({
+  Value<int> id,
+  Value<String> accountId,
+  Value<String?> payload,
+  Value<String?> draftId,
+  Value<int> revision,
+  Value<int> uploadedRevision,
+  Value<int> savedAt,
+  Value<int?> uploadedAt,
+});
+
+final class $LocalDraftsReferences
+    extends BaseReferences<_$PlumeDatabase, LocalDrafts, LocalDraftRow> {
+  $LocalDraftsReferences(super.$_db, super.$_table, super.$_typedResult);
+
+  static Accounts _accountIdTable(_$PlumeDatabase db) =>
+      db.accounts.createAlias('local_drafts__account_id__accounts__id');
+
+  $AccountsProcessedTableManager get accountId {
+    final $_column = $_itemColumn<String>('account_id')!;
+
+    final manager = $AccountsTableManager(
+      $_db,
+      $_db.accounts,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_accountIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $LocalDraftsFilterComposer
+    extends Composer<_$PlumeDatabase, LocalDrafts> {
+  $LocalDraftsFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get payload => $composableBuilder(
+    column: $table.payload,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get draftId => $composableBuilder(
+    column: $table.draftId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get revision => $composableBuilder(
+    column: $table.revision,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get uploadedRevision => $composableBuilder(
+    column: $table.uploadedRevision,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get savedAt => $composableBuilder(
+    column: $table.savedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get uploadedAt => $composableBuilder(
+    column: $table.uploadedAt,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $AccountsFilterComposer get accountId {
+    final $AccountsFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.accountId,
+      referencedTable: $db.accounts,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $AccountsFilterComposer(
+            $db: $db,
+            $table: $db.accounts,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $LocalDraftsOrderingComposer
+    extends Composer<_$PlumeDatabase, LocalDrafts> {
+  $LocalDraftsOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get id => $composableBuilder(
+    column: $table.id,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get payload => $composableBuilder(
+    column: $table.payload,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get draftId => $composableBuilder(
+    column: $table.draftId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get revision => $composableBuilder(
+    column: $table.revision,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get uploadedRevision => $composableBuilder(
+    column: $table.uploadedRevision,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get savedAt => $composableBuilder(
+    column: $table.savedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get uploadedAt => $composableBuilder(
+    column: $table.uploadedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $AccountsOrderingComposer get accountId {
+    final $AccountsOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.accountId,
+      referencedTable: $db.accounts,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $AccountsOrderingComposer(
+            $db: $db,
+            $table: $db.accounts,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $LocalDraftsAnnotationComposer
+    extends Composer<_$PlumeDatabase, LocalDrafts> {
+  $LocalDraftsAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get id =>
+      $composableBuilder(column: $table.id, builder: (column) => column);
+
+  GeneratedColumn<String> get payload =>
+      $composableBuilder(column: $table.payload, builder: (column) => column);
+
+  GeneratedColumn<String> get draftId =>
+      $composableBuilder(column: $table.draftId, builder: (column) => column);
+
+  GeneratedColumn<int> get revision =>
+      $composableBuilder(column: $table.revision, builder: (column) => column);
+
+  GeneratedColumn<int> get uploadedRevision => $composableBuilder(
+    column: $table.uploadedRevision,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get savedAt =>
+      $composableBuilder(column: $table.savedAt, builder: (column) => column);
+
+  GeneratedColumn<int> get uploadedAt => $composableBuilder(
+    column: $table.uploadedAt,
+    builder: (column) => column,
+  );
+
+  $AccountsAnnotationComposer get accountId {
+    final $AccountsAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.accountId,
+      referencedTable: $db.accounts,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $AccountsAnnotationComposer(
+            $db: $db,
+            $table: $db.accounts,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $LocalDraftsTableManager
+    extends
+        RootTableManager<
+          _$PlumeDatabase,
+          LocalDrafts,
+          LocalDraftRow,
+          $LocalDraftsFilterComposer,
+          $LocalDraftsOrderingComposer,
+          $LocalDraftsAnnotationComposer,
+          $LocalDraftsCreateCompanionBuilder,
+          $LocalDraftsUpdateCompanionBuilder,
+          (LocalDraftRow, $LocalDraftsReferences),
+          LocalDraftRow,
+          PrefetchHooks Function({bool accountId})
+        > {
+  $LocalDraftsTableManager(_$PlumeDatabase db, LocalDrafts table)
+    : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $LocalDraftsFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $LocalDraftsOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $LocalDraftsAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                Value<String> accountId = const Value.absent(),
+                Value<String?> payload = const Value.absent(),
+                Value<String?> draftId = const Value.absent(),
+                Value<int> revision = const Value.absent(),
+                Value<int> uploadedRevision = const Value.absent(),
+                Value<int> savedAt = const Value.absent(),
+                Value<int?> uploadedAt = const Value.absent(),
+              }) => LocalDraftsCompanion(
+                id: id,
+                accountId: accountId,
+                payload: payload,
+                draftId: draftId,
+                revision: revision,
+                uploadedRevision: uploadedRevision,
+                savedAt: savedAt,
+                uploadedAt: uploadedAt,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> id = const Value.absent(),
+                required String accountId,
+                Value<String?> payload = const Value.absent(),
+                Value<String?> draftId = const Value.absent(),
+                Value<int> revision = const Value.absent(),
+                Value<int> uploadedRevision = const Value.absent(),
+                required int savedAt,
+                Value<int?> uploadedAt = const Value.absent(),
+              }) => LocalDraftsCompanion.insert(
+                id: id,
+                accountId: accountId,
+                payload: payload,
+                draftId: draftId,
+                revision: revision,
+                uploadedRevision: uploadedRevision,
+                savedAt: savedAt,
+                uploadedAt: uploadedAt,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable<LocalDrafts, LocalDraftRow>(table),
+                  $LocalDraftsReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({accountId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (accountId) {
+                      state = state.withJoin(
+                        currentTable: table,
+                        currentColumn: table.accountId,
+                        referencedTable: $LocalDraftsReferences._accountIdTable(
+                          db,
+                        ),
+                        referencedColumn: $LocalDraftsReferences
+                            ._accountIdTable(db)
+                            .id,
+                      ) as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $LocalDraftsProcessedTableManager =
+    ProcessedTableManager<
+      _$PlumeDatabase,
+      LocalDrafts,
+      LocalDraftRow,
+      $LocalDraftsFilterComposer,
+      $LocalDraftsOrderingComposer,
+      $LocalDraftsAnnotationComposer,
+      $LocalDraftsCreateCompanionBuilder,
+      $LocalDraftsUpdateCompanionBuilder,
+      (LocalDraftRow, $LocalDraftsReferences),
+      LocalDraftRow,
+      PrefetchHooks Function({bool accountId})
+    >;
 typedef $SettingsCreateCompanionBuilder = SettingsCompanion Function({
   required String key,
   required String value,
@@ -11270,6 +12251,8 @@ class $PlumeDatabaseManager {
   $PendingOpsTableManager get pendingOps =>
       $PendingOpsTableManager(_db, _db.pendingOps);
   $OutboxTableManager get outbox => $OutboxTableManager(_db, _db.outbox);
+  $LocalDraftsTableManager get localDrafts =>
+      $LocalDraftsTableManager(_db, _db.localDrafts);
   $SettingsTableManager get settings =>
       $SettingsTableManager(_db, _db.settings);
   $MessageFtsTableManager get messageFts =>

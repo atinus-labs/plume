@@ -56,7 +56,7 @@ class PlumeDatabase extends _$PlumeDatabase {
       PlumeDatabase(NativeDatabase.memory(setup: configureConnection, logStatements: logStatements));
 
   @override
-  int get schemaVersion => 2;
+  int get schemaVersion => 3;
 
   /// Migration steps keyed by the version they upgrade from. When bumping
   /// [schemaVersion]: edit `schema.drift`, run
@@ -67,6 +67,11 @@ class PlumeDatabase extends _$PlumeDatabase {
     1: (m, db) async {
       final v2 = Schema2(database: db);
       await m.addColumn(v2.accounts, v2.accounts.providerConfig);
+    },
+    2: (m, db) async {
+      final v3 = Schema3(database: db);
+      await m.createTable(v3.localDrafts);
+      await m.createIndex(v3.localDraftsByAccount);
     },
   };
 

@@ -1,4 +1,4 @@
--- Plume local mail store, schema version 2.
+-- Plume local mail store, schema version 3.
 --
 -- Dates are epoch milliseconds. Address lists are compact JSON arrays of
 -- objects with e (email) and n (name) keys, NULL when empty. Everything that
@@ -180,6 +180,25 @@ CREATE TABLE outbox (
 ) AS OutboxRow;
 
 CREATE INDEX outbox_by_account ON outbox (account_id);
+
+-- Drafts kept on this device until the server has them (v3). payload is the
+-- draft as last written (an outbox-style JSON message), NULL once discarded
+-- while the server draft draft_id is still to be deleted. Every save bumps
+-- revision; uploaded_revision is the one the server has (0 for none).
+-- saved_at and uploaded_at (epoch ms) are when it was last saved here and
+-- last reached the server.
+CREATE TABLE local_drafts (
+  id INTEGER NOT NULL PRIMARY KEY AUTOINCREMENT,
+  account_id TEXT NOT NULL REFERENCES accounts (id) ON DELETE CASCADE,
+  payload TEXT,
+  draft_id TEXT,
+  revision INTEGER NOT NULL DEFAULT 1,
+  uploaded_revision INTEGER NOT NULL DEFAULT 0,
+  saved_at INTEGER NOT NULL,
+  uploaded_at INTEGER
+) AS LocalDraftRow;
+
+CREATE INDEX local_drafts_by_account ON local_drafts (account_id, id);
 
 CREATE TABLE settings (
   "key" TEXT NOT NULL PRIMARY KEY,

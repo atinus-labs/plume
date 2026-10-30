@@ -99,6 +99,15 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
   bool _minimized = false;
   late final bool _animateIn = widget.animateIn;
   late String? _draftId = widget.request.draftId;
+
+  /// The draft as kept on this device, once saved.
+  late int? _localId = widget.request.localDraftId;
+
+  /// The account [_draftId] and [_localId] belong to.
+  late String? _draftAccount = widget.request.accountId;
+
+  /// The latest save, whose upload the status line tells of.
+  LocalDraft? _lastSave;
   Timer? _autosave;
   String _saveState = '';
   bool _sending = false;
@@ -221,21 +230,27 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
   /// made instead of making another.
   Future<bool> _saving = Future.value(false);
 
-  /// Saves the draft, returning whether it is saved.
+  /// Saves the draft on this device, returning whether it is saved. The
+  /// upload to the server follows in the background.
   Future<bool> _saveDraft() => _saving = _saving.then((_) => _save());
 
   Future<bool> _save() async {
     // A draft saved without the attachments still coming would lose them.
     await _attachmentsLoaded;
     if (_isEmpty || _sending || !mounted) return false;
-    final message = _build();
-    if (message == null) return false;
+    final engine = ref.read(engineProvider);
+    final account = _account;
+    if (account == null) return false;
     setState(() => _saveState = 'Saving…');
     try {
-      final id = await ref.read(engineProvider).saveDraft(message);
-      _draftId = id;
-      ref.read(composeProvider.notifier).saved(widget.request.id, id);
-      if (mounted) setState(() => _saveState = 'Draft saved');
+      await _leaveOtherAccount(engine, account.id);
+      final draft = await engine.saveDraft(_build()!, localId: _localId);
+      _localId = draft.id;
+      _draftId = draft.draftId ?? _draftId;
+      _lastSave = draft;
+      if (!mounted) return true;
+      ref.read(composeProvider.notifier).saved(widget.request.id, draft.id);
+      unawaited(_showUploaded(engine, draft));
       return true;
     } catch (_) {
       if (mounted) setState(() => _saveState = 'Couldn’t save the draft');
@@ -243,11 +258,42 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     }
   }
 
+  /// Tells whether the server has [draft] too, once its upload was tried.
+  Future<void> _showUploaded(MailEngine engine, LocalDraft draft) async {
+    final bool uploaded;
+    try {
+      uploaded = await engine.uploadDraft(draft);
+    } on Object {
+      return;
+    }
+    // A later save tells of its own.
+    if (!mounted || _lastSave != draft) return;
+    setState(() => _saveState = uploaded ? 'Draft saved' : 'Saved on this device');
+  }
+
+  /// Keeps the draft in [accountId]: one kept in another account, before
+  /// the message moved, is discarded there.
+  Future<void> _leaveOtherAccount(MailEngine engine, String accountId) async {
+    final previous = _draftAccount;
+    _draftAccount = accountId;
+    if (previous == null || previous == accountId) return;
+    final (localId, draftId) = (_localId, _draftId);
+    _localId = null;
+    _draftId = null;
+    if (localId != null || draftId != null) {
+      await engine.discardDraft(previous, localId: localId, draftId: draftId);
+    }
+  }
+
   // Sending ------------------------------------------------------------------
 
-  OutgoingMessage? _build() {
+  Account? get _account {
     final accounts = ref.read(accountMapProvider);
-    final account = accounts[_accountId] ?? accounts.values.firstOrNull;
+    return accounts[_accountId] ?? accounts.values.firstOrNull;
+  }
+
+  OutgoingMessage? _build() {
+    final account = _account;
     if (account == null) return null;
     final quote = _quotedText;
     final typed = _plainText ? _plainBody.text.trimRight() : _body.document.toMailText();
@@ -283,8 +329,12 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     // A save still under way would leave its draft behind.
     await (_attachmentsLoaded, _saving).wait;
     if (!mounted) return;
-    final message = _build();
-    if (message == null) return;
+    final account = _account;
+    if (account == null) return;
+    final engine = ref.read(engineProvider);
+    await _leaveOtherAccount(engine, account.id);
+    if (!mounted) return;
+    final message = _build()!;
     if (message.subject.isEmpty &&
         !await _confirm('Send without a subject?', 'Send'))
       return;
@@ -298,9 +348,8 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     }
     _sending = true;
     _autosave?.cancel();
-    final engine = ref.read(engineProvider);
     final delay = Duration(seconds: ref.read(settingsProvider).undoSendSeconds);
-    final outboxId = await engine.send(message, delay: delay);
+    final outboxId = await engine.send(message, delay: delay, localDraftId: _localId);
     ref.read(composeProvider.notifier).close(widget.request.id, sent: true);
     final composer = ref.read(composeProvider.notifier);
     showSnack(
@@ -320,24 +369,22 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
 
   Future<void> _discard() async {
     _autosave?.cancel();
-    final accountId = _accountId;
     final engine = ref.read(engineProvider);
     final empty = _isEmpty;
     ref.read(composeProvider.notifier).close(widget.request.id);
     // Whatever a save under way makes goes too.
     await _saving;
-    final draftId = _draftId;
-    if (draftId != null && accountId != null) {
+    final accountId = _draftAccount;
+    if (accountId != null && (_localId != null || _draftId != null)) {
       try {
-        await engine.deleteDraft(accountId, draftId);
-        unawaited(engine.syncAccount(accountId));
+        await engine.discardDraft(accountId, localId: _localId, draftId: _draftId);
       } catch (_) {}
     }
     if (!empty) showSnack('Draft discarded');
   }
 
-  /// Closes the window, keeping what was written as a draft. It shows up in
-  /// Drafts after the next sync; until then the snackbar opens it again.
+  /// Closes the window, keeping what was written as a draft. It is kept on
+  /// this device until the server has it, and the snackbar opens it again.
   Future<void> _closeKeepingDraft() async {
     _autosave?.cancel();
     if (_isEmpty) {
@@ -347,15 +394,22 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     final saved = await _saveDraft();
     if (!mounted) return;
     final message = _build();
+    final localId = _localId;
     final composer = ref.read(composeProvider.notifier);
     final engine = ref.read(engineProvider);
+    final offline = ref.read(syncStatusProvider).value?[message?.accountId]?.isOffline ?? false;
     composer.close(widget.request.id);
-    if (saved && message != null) unawaited(engine.syncAccount(message.accountId));
+    // Drafts then shows it as the server has it.
+    if (saved && message != null) unawaited(engine.flushDrafts(message.accountId));
     showSnack(
-      saved ? 'Draft saved' : 'Couldn’t save the draft',
+      !saved
+          ? 'Couldn’t save the draft'
+          : offline
+          ? 'Draft saved on this device'
+          : 'Draft saved',
       actionLabel: message == null ? null : 'Open',
       duration: saved ? null : const Duration(seconds: 10),
-      onAction: message == null ? null : () => composer.reopen(message),
+      onAction: message == null ? null : () => composer.reopen(message, localDraftId: localId),
     );
   }
 
@@ -609,7 +663,11 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
             accounts: accounts,
             selected: _accountId,
             locked: widget.request.threadId != null,
-            onChanged: (id) => setState(() => _accountId = id),
+            onChanged: (id) {
+              setState(() => _accountId = id);
+              // Moves the draft over.
+              _scheduleSave();
+            },
           ),
           divider,
         ],

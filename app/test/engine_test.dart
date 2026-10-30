@@ -32,6 +32,13 @@ final class FakeProvider implements MailProvider {
   Object? failExecuteWith;
   Object? failSyncWith;
   Completer<void>? holdExecute;
+
+  /// Server drafts by id.
+  final drafts = <String, OutgoingMessage>{};
+  final _deleted = <String>{};
+  Object? failDraftsWith;
+  Completer<void>? holdDrafts;
+  int draftSaves = 0;
   int syncs = 0;
   int disposals = 0;
 
@@ -51,7 +58,9 @@ final class FakeProvider implements MailProvider {
       await store.replaceMailboxes(account.id, [
         Mailbox(accountId: account.id, id: 'INBOX', name: 'Inbox', role: MailboxRole.inbox, kind: MailboxKind.system),
         Mailbox(accountId: account.id, id: 'TRASH', name: 'Trash', role: MailboxRole.trash, kind: MailboxKind.system),
+        Mailbox(accountId: account.id, id: 'DRAFTS', name: 'Drafts', role: MailboxRole.drafts, kind: MailboxKind.system),
       ]);
+      await store.deleteMessages(account.id, _deleted.toList());
       await store.upsertMessages(account.id, server.values.toList());
     });
     return SyncResult(newMessages: [for (final m in server.values) if (!known.contains(m.id)) m]);
@@ -102,9 +111,31 @@ final class FakeProvider implements MailProvider {
   Future<SearchPage> search(SyncStore store, String query, {String? pageToken}) async =>
       const SearchPage(threadIds: []);
   @override
-  Future<String> saveDraft(OutgoingMessage message) async => 'd1';
+  Future<String> saveDraft(OutgoingMessage message) async {
+    if (holdDrafts != null) await holdDrafts!.future;
+    if (failDraftsWith != null) throw failDraftsWith!;
+    draftSaves++;
+    final id = message.draftId ?? 'd$draftSaves';
+    drafts[id] = message;
+    server[id] = Message(
+      accountId: account.id,
+      id: id,
+      threadId: message.threadId ?? 'thread-$id',
+      subject: message.subject,
+      date: DateTime.now(),
+      isDraft: true,
+      mailboxIds: const {'DRAFTS'},
+    );
+    return id;
+  }
+
   @override
-  Future<void> deleteDraft(String draftId) async {}
+  Future<void> deleteDraft(String draftId) async {
+    if (failDraftsWith != null) throw failDraftsWith!;
+    drafts.remove(draftId);
+    server.remove(draftId);
+    _deleted.add(draftId);
+  }
   @override
   Future<String?> draftIdOf(String messageId) async => messageId;
   @override
@@ -146,6 +177,19 @@ void main() {
   late MailEngine engine;
 
   Future<List<ThreadSummary>> inbox() => store.watchThreads(const RoleFilter(MailboxRole.inbox)).first;
+
+  /// Ids of the messages in Drafts.
+  Future<List<String>> inDrafts() async => [
+        for (final t in await store.watchThreads(const RoleFilter(MailboxRole.drafts)).first)
+          for (final m in await store.messagesInThreads('a1', [t.id])) m.id,
+      ];
+
+  OutgoingMessage draft(String subject) => OutgoingMessage(
+      accountId: 'a1',
+      from: const Address('me@example.com'),
+      to: const [Address('you@example.com')],
+      subject: subject,
+      textBody: 'Written on a train.');
 
   setUp(() async {
     store = DriftMailStore.inMemory();
@@ -288,5 +332,96 @@ void main() {
     await engine.syncAccount('a1');
     await _until(() => engine.currentStatuses['a1']?.phase == SyncPhase.needsReauth);
     await _until(() async => (await store.accounts()).single.status == AccountStatus.needsReauth);
+  });
+
+  group('drafts', () {
+    test('one written offline waits in Drafts and reaches the server once back online', () async {
+      provider.failDraftsWith = const TransientException('offline');
+      final saved = await engine.saveDraft(draft('Plans'));
+      expect(await engine.uploadDraft(saved), isFalse);
+      expect(provider.drafts, isEmpty);
+      expect(await inDrafts(), [LocalDraft.messageIdOf(saved.id)]);
+
+      provider.failDraftsWith = null;
+      engine.wake();
+      await _until(() => provider.drafts.isNotEmpty);
+      expect(provider.drafts.values.single.subject, 'Plans');
+      await engine.syncAccount('a1');
+      expect(await inDrafts(), ['d1'], reason: 'the server copy takes the place of the one kept here');
+    });
+
+    test('one written offline is still there after a restart', () async {
+      provider.failDraftsWith = const TransientException('offline');
+      final saved = await engine.saveDraft(draft('Plans'));
+      expect(await engine.uploadDraft(saved), isFalse);
+      await engine.dispose();
+
+      provider.failDraftsWith = null;
+      engine = MailEngine(store: store, factories: [factory], tokenSourceFor: (_) => _Tokens());
+      await engine.start();
+      await _until(() => provider.drafts.isNotEmpty);
+      expect(provider.drafts.values.single.subject, 'Plans');
+    });
+
+    test('saving again updates the server draft instead of making another', () async {
+      final first = await engine.saveDraft(draft('Plans'));
+      expect(await engine.uploadDraft(first), isTrue);
+      final second = await engine.saveDraft(draft('Plans for Friday'), localId: first.id);
+      expect(await engine.uploadDraft(second), isTrue);
+      expect(provider.drafts.keys, ['d1']);
+      expect(provider.drafts['d1']!.subject, 'Plans for Friday');
+    });
+
+    test('sending takes the draft along, uploaded or not', () async {
+      final uploaded = await engine.saveDraft(draft('Uploaded'));
+      expect(await engine.uploadDraft(uploaded), isTrue);
+      await engine.send(draft('Uploaded'), delay: Duration.zero, localDraftId: uploaded.id);
+      await _until(() => provider.sent.isNotEmpty);
+      expect(provider.sent.single.draftId, 'd1');
+
+      provider.failDraftsWith = const TransientException('offline');
+      final local = await engine.saveDraft(draft('Local'));
+      await engine.send(draft('Local'), delay: Duration.zero, localDraftId: local.id);
+      await _until(() => provider.sent.length == 2);
+      expect(provider.sent.last.draftId, isNull);
+      expect(await store.localDrafts('a1'), isEmpty);
+      expect(await inDrafts(), isNot(contains(LocalDraft.messageIdOf(local.id))));
+    });
+
+    test('one sent while its upload is on its way leaves no draft behind', () async {
+      provider.holdDrafts = Completer();
+      final saved = await engine.saveDraft(draft('Plans'));
+      await engine.send(draft('Plans'), delay: const Duration(milliseconds: 200), localDraftId: saved.id);
+      provider.holdDrafts!.complete();
+      await _until(() => provider.sent.isNotEmpty);
+      // The upload made one, which went once it found the draft sent.
+      await _until(() => provider.draftSaves == 1 && provider.drafts.isEmpty);
+      expect(provider.sent.single.draftId, isNull);
+    });
+
+    test('one discarded offline is deleted on the server once back online', () async {
+      final saved = await engine.saveDraft(draft('Plans'));
+      expect(await engine.uploadDraft(saved), isTrue);
+      provider.failDraftsWith = const TransientException('offline');
+      await engine.discardDraft('a1', localId: saved.id);
+      expect(provider.drafts, isNotEmpty);
+
+      provider.failDraftsWith = null;
+      engine.wake();
+      await _until(() => provider.drafts.isEmpty);
+      await _until(() async => (await store.localDrafts('a1')).isEmpty);
+      await _until(() async => (await inDrafts()).isEmpty);
+    });
+
+    test('deleting one only on this device from a list discards it', () async {
+      provider.failDraftsWith = const TransientException('offline');
+      final saved = await engine.saveDraft(draft('Plans'));
+      final undo = await engine.perform(ActionOperation(
+          accountId: 'a1', scope: OperationScope.thread, ids: [LocalDraft.messageIdOf(saved.id)], action: MailAction.trash));
+      expect(undo, isNull);
+      expect(await store.pendingOperations(), isEmpty);
+      expect(await store.localDrafts('a1'), isEmpty);
+      expect(await inDrafts(), isEmpty);
+    });
   });
 }

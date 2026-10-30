@@ -108,6 +108,37 @@ void main() {
     expect((await drafts()).map((m) => m.subject), isNot(contains('Packing list for Lisbon')));
   });
 
+  testWidgets('a draft kept on this device opens from Drafts and goes to the server once closed', (tester) async {
+    await start(tester);
+    final account = (await t.runAsync(services.store.accounts))!.single;
+    // As if written offline: saved here, and not uploaded yet.
+    final kept = (await t.runAsync(() => services.store.saveLocalDraft(OutgoingMessage(
+          accountId: account.id,
+          from: Address(account.email, account.displayName),
+          subject: 'Written on the train',
+          textBody: 'Tickets are booked.',
+          htmlBody: '<p>Tickets are booked.</p>',
+        ))))!;
+    ref.read(viewProvider.notifier).show(const MailView(ViewKind.drafts));
+    await settle();
+
+    await t.tap(find.text('Written on the train'));
+    await settle();
+    expect(find.byType(ComposePanel), findsOneWidget);
+    expect(typed(), 'Tickets are booked.');
+
+    final editor = t.widget<QuillEditor>(find.byType(QuillEditor)).controller;
+    editor.replaceText(editor.document.length - 1, 0, ' See you Friday.', null);
+    await t.tap(find.byTooltip('Save & close (Esc)'));
+    await settle();
+    expect(find.text('Draft saved'), findsOneWidget);
+
+    final saved = (await drafts()).where((m) => m.subject == 'Written on the train').single;
+    expect(saved.id, isNot(LocalDraft.messageIdOf(kept.id)), reason: 'the server copy took its place');
+    final body = (await t.runAsync(() => services.store.body(saved.accountId, saved.id)))!;
+    expect(body.text, contains('Tickets are booked. See you Friday.'));
+  });
+
   testWidgets('letters typed into the message are text, not mail shortcuts', (tester) async {
     await start(tester);
     final thread = ref.read(visibleThreadsProvider).value!.first;

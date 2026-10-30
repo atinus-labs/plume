@@ -251,6 +251,149 @@ void main() {
     });
   });
 
+  group('drafts kept on this device', () {
+    OutgoingMessage draft(String subject, {String? draftId, String? threadId}) => OutgoingMessage(
+      accountId: 'a1',
+      from: const Address('a1@example.com', 'Me'),
+      to: const [Address('ana@example.org', 'Ana')],
+      subject: subject,
+      textBody: '$subject,\n\n  written   offline',
+      htmlBody: '<p>$subject</p>',
+      threadId: threadId,
+      draftId: draftId,
+    );
+
+    Future<List<Message>> shown() async => [
+      for (final t in await threads(store, const RoleFilter(MailboxRole.drafts)))
+        ...await store.messagesInThreads(t.accountId, [t.id]),
+    ];
+
+    test('a draft the server does not have shows in Drafts, and saving again updates it', () async {
+      final first = await store.saveLocalDraft(draft('Plans'));
+      expect(first.revision, 1);
+      expect(first.isUploaded, isFalse);
+      final placeholder = LocalDraft.messageIdOf(first.id);
+      expect(LocalDraft.idOf(placeholder), first.id);
+      expect(LocalDraft.idOf('18c2f0a9'), isNull);
+
+      var messages = await shown();
+      expect(messages.single.id, placeholder);
+      expect(messages.single.isDraft, isTrue);
+      expect(messages.single.subject, 'Plans');
+      expect(messages.single.snippet, 'Plans, written offline');
+      expect((await store.body('a1', placeholder))!.html, '<p>Plans</p>');
+
+      final second = await store.saveLocalDraft(draft('Plans for Friday'), id: first.id);
+      expect(second.id, first.id);
+      expect(second.revision, 2);
+      messages = await shown();
+      expect(messages.single.subject, 'Plans for Friday');
+      expect((await store.localDraft(first.id))!.message!.subject, 'Plans for Friday');
+    });
+
+    test('a reply waits in the conversation it answers', () async {
+      await store.upsertMessages('a1', [msg('m1', thread: 't1')]);
+      final saved = await store.saveLocalDraft(draft('Re: Subject', threadId: 't1'));
+      final thread = await store.messagesInThreads('a1', ['t1']);
+      expect(thread.map((m) => m.id), ['m1', LocalDraft.messageIdOf(saved.id)]);
+      expect((await summary(store, 'a1', 't1'))!.draftCount, 1);
+    });
+
+    test('the server copy takes over after the sync that follows the upload', () async {
+      final saved = await store.saveLocalDraft(draft('Plans'));
+      final before = DateTime.now().subtract(const Duration(seconds: 1));
+      expect(await store.markLocalDraftUploaded(saved.id, revision: 1, draftId: 'r1'), isTrue);
+
+      // A sync that started before the upload may not have the server copy.
+      await store.settleLocalDrafts('a1', uploadedBefore: before);
+      expect((await shown()).single.id, LocalDraft.messageIdOf(saved.id));
+
+      await store.upsertMessages('a1', [msg('r1-message', subject: 'Plans', draft: true, boxes: {'DRAFT'})]);
+      await store.settleLocalDrafts('a1', uploadedBefore: DateTime.now().add(const Duration(seconds: 1)));
+      expect((await shown()).single.id, 'r1-message');
+
+      final kept = (await store.localDraft(saved.id))!;
+      expect(kept.draftId, 'r1');
+      expect(kept.message!.draftId, 'r1');
+      expect(kept.isUploaded, isTrue);
+    });
+
+    test('a full resync puts back the drafts it wiped', () async {
+      final saved = await store.saveLocalDraft(draft('Plans'));
+      await store.clearMail('a1');
+      expect(await shown(), isEmpty);
+      await store.settleLocalDrafts('a1', uploadedBefore: DateTime.now());
+      expect((await shown()).single.id, LocalDraft.messageIdOf(saved.id));
+    });
+
+    test('a server draft opened again is kept once, however it is saved', () async {
+      final opened = await store.saveLocalDraft(draft('Plans', draftId: 'r1'));
+      expect(opened.draftId, 'r1');
+      // The server has it, so the server's copy is the one in Drafts.
+      expect(await shown(), isEmpty);
+      final again = await store.saveLocalDraft(draft('Plans, again', draftId: 'r1'));
+      expect(again.id, opened.id);
+      expect((await store.localDraftFor('a1', 'r1'))!.message!.subject, 'Plans, again');
+      // An upload ahead of the window's message wins.
+      await store.markLocalDraftUploaded(opened.id, revision: again.revision, draftId: 'r2');
+      final third = await store.saveLocalDraft(draft('Plans, third'), id: opened.id);
+      expect(third.draftId, 'r2');
+      expect(third.isUploaded, isFalse);
+    });
+
+    test('taking one to send removes it and its place in Drafts', () async {
+      final saved = await store.saveLocalDraft(draft('Plans'));
+      final taken = await store.takeLocalDraft(saved.id);
+      expect(taken!.message!.subject, 'Plans');
+      expect(await store.localDraft(saved.id), isNull);
+      expect(await shown(), isEmpty);
+      expect(await store.takeLocalDraft(saved.id), isNull);
+    });
+
+    test('discarding keeps only what the server still has to delete', () async {
+      final local = await store.saveLocalDraft(draft('Never uploaded'));
+      await store.discardLocalDraft('a1', id: local.id);
+      expect(await store.localDraft(local.id), isNull);
+      expect(await shown(), isEmpty);
+
+      final uploaded = await store.saveLocalDraft(draft('Uploaded'));
+      await store.markLocalDraftUploaded(uploaded.id, revision: 1, draftId: 'r1');
+      await store.discardLocalDraft('a1', id: uploaded.id);
+      final left = (await store.localDraft(uploaded.id))!;
+      expect(left.isDiscarded, isTrue);
+      expect(left.draftId, 'r1');
+      expect(await store.localDraftFor('a1', 'r1'), isNull);
+      expect(await shown(), isEmpty);
+      // Saving into a discarded draft starts a new one.
+      expect((await store.saveLocalDraft(draft('Again'), id: uploaded.id)).id, isNot(uploaded.id));
+
+      // A server draft never saved here is remembered by its id alone.
+      await store.discardLocalDraft('a1', draftId: 'r9');
+      expect((await store.localDrafts('a1')).where((d) => d.draftId == 'r9').single.isDiscarded, isTrue);
+    });
+
+    test('pruning forgets what the server has, and keeps the rest', () async {
+      final waiting = await store.saveLocalDraft(draft('Waiting'));
+      final uploaded = await store.saveLocalDraft(draft('Uploaded'));
+      await store.markLocalDraftUploaded(uploaded.id, revision: 1, draftId: 'r1');
+      await store.settleLocalDrafts('a1', uploadedBefore: DateTime.now().add(const Duration(seconds: 1)));
+      // Uploaded, but no sync has brought the server's copy yet.
+      final unsettled = await store.saveLocalDraft(draft('Unsettled'));
+      await store.markLocalDraftUploaded(unsettled.id, revision: 1, draftId: 'r2');
+      final discarded = await store.saveLocalDraft(draft('Discarded', draftId: 'r3'));
+      await store.discardLocalDraft('a1', id: discarded.id);
+
+      await store.pruneLocalDrafts();
+      expect([for (final d in await store.localDrafts('a1')) d.id], [waiting.id, unsettled.id, discarded.id]);
+    });
+
+    test('they go with their account', () async {
+      await store.saveLocalDraft(draft('Plans'));
+      await store.deleteAccount('a1');
+      expect(await store.localDrafts('a1'), isEmpty);
+    });
+  });
+
   group('settings and sync state', () {
     test('settings read, write, delete and watch', () async {
       final rec = Recorder(store.watchSetting('theme'));

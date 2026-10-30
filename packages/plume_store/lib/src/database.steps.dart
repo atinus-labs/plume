@@ -1232,8 +1232,412 @@ i1.GeneratedColumn<String> _column_78(String aliasedName) =>
       type: i1.DriftSqlType.string,
       $customConstraints: '',
     );
+
+final class Schema3 extends i0.VersionedSchema {
+  Schema3({required super.database}) : super(version: 3);
+  @override
+  late final List<i1.DatabaseSchemaEntity> entities = [
+    accounts,
+    mailboxes,
+    messages,
+    messagesByThread,
+    messageMailboxes,
+    messageMailboxesByMailbox,
+    threads,
+    threadsActive,
+    threadsFlagged,
+    threadMailboxes,
+    threadMailboxesList,
+    threadMailboxesUnread,
+    bodies,
+    bodyParts,
+    contacts,
+    contactsRank,
+    syncState,
+    pendingOps,
+    pendingOpsByAccount,
+    outbox,
+    outboxByAccount,
+    localDrafts,
+    localDraftsByAccount,
+    settings,
+    messageFts,
+  ];
+  late final Shape0 accounts = Shape0(
+    source: i0.VersionedTable(
+      entityName: 'accounts',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: [],
+      columns: [
+        _column_0,
+        _column_1,
+        _column_2,
+        _column_3,
+        _column_4,
+        _column_5,
+        _column_6,
+        _column_7,
+        _column_8,
+        _column_9,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape1 mailboxes = Shape1(
+    source: i0.VersionedTable(
+      entityName: 'mailboxes',
+      withoutRowId: true,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(account_id, id)'],
+      columns: [
+        _column_10,
+        _column_11,
+        _column_12,
+        _column_13,
+        _column_14,
+        _column_15,
+        _column_16,
+        _column_17,
+        _column_18,
+        _column_19,
+        _column_6,
+        _column_20,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape2 messages = Shape2(
+    source: i0.VersionedTable(
+      entityName: 'messages',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: ['UNIQUE(account_id, id)'],
+      columns: [
+        _column_21,
+        _column_10,
+        _column_11,
+        _column_22,
+        _column_23,
+        _column_24,
+        _column_25,
+        _column_26,
+        _column_27,
+        _column_28,
+        _column_29,
+        _column_30,
+        _column_31,
+        _column_32,
+        _column_33,
+        _column_34,
+        _column_35,
+        _column_36,
+        _column_37,
+        _column_38,
+        _column_39,
+        _column_40,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  final i1.Index messagesByThread = i1.Index(
+    'messages_by_thread',
+    'CREATE INDEX messages_by_thread ON messages (account_id, thread_id, date)',
+  );
+  late final Shape3 messageMailboxes = Shape3(
+    source: i0.VersionedTable(
+      entityName: 'message_mailboxes',
+      withoutRowId: true,
+      isStrict: false,
+      tableConstraints: [
+        'PRIMARY KEY(account_id, message_id, mailbox_id)',
+        'FOREIGN KEY(account_id, message_id)REFERENCES messages(account_id, id)ON DELETE CASCADE',
+      ],
+      columns: [_column_41, _column_42, _column_43],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  final i1.Index messageMailboxesByMailbox = i1.Index(
+    'message_mailboxes_by_mailbox',
+    'CREATE INDEX message_mailboxes_by_mailbox ON message_mailboxes (account_id, mailbox_id)',
+  );
+  late final Shape4 threads = Shape4(
+    source: i0.VersionedTable(
+      entityName: 'threads',
+      withoutRowId: true,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(account_id, id)'],
+      columns: [
+        _column_10,
+        _column_11,
+        _column_44,
+        _column_45,
+        _column_46,
+        _column_47,
+        _column_48,
+        _column_49,
+        _column_50,
+        _column_51,
+        _column_52,
+        _column_53,
+        _column_54,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  final i1.Index threadsActive = i1.Index(
+    'threads_active',
+    'CREATE INDEX threads_active ON threads (account_id, last_date DESC, id) WHERE active_count > 0',
+  );
+  final i1.Index threadsFlagged = i1.Index(
+    'threads_flagged',
+    'CREATE INDEX threads_flagged ON threads (account_id, last_date DESC, id) WHERE flagged = 1 AND active_count > 0',
+  );
+  late final Shape5 threadMailboxes = Shape5(
+    source: i0.VersionedTable(
+      entityName: 'thread_mailboxes',
+      withoutRowId: true,
+      isStrict: false,
+      tableConstraints: [
+        'PRIMARY KEY(account_id, thread_id, mailbox_id)',
+        'FOREIGN KEY(account_id, thread_id)REFERENCES threads(account_id, id)ON DELETE CASCADE',
+      ],
+      columns: [_column_41, _column_22, _column_43, _column_46, _column_55],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  final i1.Index threadMailboxesList = i1.Index(
+    'thread_mailboxes_list',
+    'CREATE INDEX thread_mailboxes_list ON thread_mailboxes (account_id, mailbox_id, last_date DESC, thread_id)',
+  );
+  final i1.Index threadMailboxesUnread = i1.Index(
+    'thread_mailboxes_unread',
+    'CREATE INDEX thread_mailboxes_unread ON thread_mailboxes (account_id, mailbox_id) WHERE unread = 1',
+  );
+  late final Shape6 bodies = Shape6(
+    source: i0.VersionedTable(
+      entityName: 'bodies',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: [
+        'PRIMARY KEY(account_id, message_id)',
+        'FOREIGN KEY(account_id, message_id)REFERENCES messages(account_id, id)ON DELETE CASCADE',
+      ],
+      columns: [_column_41, _column_42, _column_56, _column_57],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape7 bodyParts = Shape7(
+    source: i0.VersionedTable(
+      entityName: 'body_parts',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: [
+        'PRIMARY KEY(account_id, message_id, content_id)',
+        'FOREIGN KEY(account_id, message_id)REFERENCES bodies(account_id, message_id)ON DELETE CASCADE',
+      ],
+      columns: [_column_41, _column_42, _column_58, _column_59],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape8 contacts = Shape8(
+    source: i0.VersionedTable(
+      entityName: 'contacts',
+      withoutRowId: true,
+      isStrict: false,
+      tableConstraints: [],
+      columns: [_column_60, _column_61, _column_62, _column_63],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  final i1.Index contactsRank = i1.Index(
+    'contacts_rank',
+    'CREATE INDEX contacts_rank ON contacts (use_count DESC, last_used DESC)',
+  );
+  late final Shape9 syncState = Shape9(
+    source: i0.VersionedTable(
+      entityName: 'sync_state',
+      withoutRowId: true,
+      isStrict: false,
+      tableConstraints: ['PRIMARY KEY(account_id, "key")'],
+      columns: [_column_10, _column_64, _column_65],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape10 pendingOps = Shape10(
+    source: i0.VersionedTable(
+      entityName: 'pending_ops',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: [],
+      columns: [
+        _column_66,
+        _column_10,
+        _column_67,
+        _column_68,
+        _column_69,
+        _column_70,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  final i1.Index pendingOpsByAccount = i1.Index(
+    'pending_ops_by_account',
+    'CREATE INDEX pending_ops_by_account ON pending_ops (account_id, id)',
+  );
+  late final Shape11 outbox = Shape11(
+    source: i0.VersionedTable(
+      entityName: 'outbox',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: [],
+      columns: [
+        _column_66,
+        _column_10,
+        _column_67,
+        _column_71,
+        _column_72,
+        _column_68,
+        _column_69,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  final i1.Index outboxByAccount = i1.Index(
+    'outbox_by_account',
+    'CREATE INDEX outbox_by_account ON outbox (account_id)',
+  );
+  late final Shape14 localDrafts = Shape14(
+    source: i0.VersionedTable(
+      entityName: 'local_drafts',
+      withoutRowId: false,
+      isStrict: false,
+      tableConstraints: [],
+      columns: [
+        _column_66,
+        _column_10,
+        _column_79,
+        _column_80,
+        _column_81,
+        _column_82,
+        _column_83,
+        _column_84,
+      ],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  final i1.Index localDraftsByAccount = i1.Index(
+    'local_drafts_by_account',
+    'CREATE INDEX local_drafts_by_account ON local_drafts (account_id, id)',
+  );
+  late final Shape12 settings = Shape12(
+    source: i0.VersionedTable(
+      entityName: 'settings',
+      withoutRowId: true,
+      isStrict: false,
+      tableConstraints: [],
+      columns: [_column_73, _column_65],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+  late final Shape13 messageFts = Shape13(
+    source: i0.VersionedVirtualTable(
+      entityName: 'message_fts',
+      moduleAndArgs: 'fts5(subject, sender, recipients, snippet, body, content = \'\', contentless_delete = 1, tokenize = \'unicode61 remove_diacritics 2\', prefix = \'2 3\')',
+      columns: [_column_74, _column_75, _column_76, _column_77, _column_78],
+      attachedDatabase: database,
+    ),
+    alias: null,
+  );
+}
+
+class Shape14 extends i0.VersionedTable {
+  Shape14({required super.source, required super.alias}) : super.aliased();
+  i1.GeneratedColumn<int> get id =>
+      columnsByName['id']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<String> get accountId =>
+      columnsByName['account_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get payload =>
+      columnsByName['payload']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<String> get draftId =>
+      columnsByName['draft_id']! as i1.GeneratedColumn<String>;
+  i1.GeneratedColumn<int> get revision =>
+      columnsByName['revision']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get uploadedRevision =>
+      columnsByName['uploaded_revision']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get savedAt =>
+      columnsByName['saved_at']! as i1.GeneratedColumn<int>;
+  i1.GeneratedColumn<int> get uploadedAt =>
+      columnsByName['uploaded_at']! as i1.GeneratedColumn<int>;
+}
+
+i1.GeneratedColumn<String> _column_79(String aliasedName) =>
+    i1.GeneratedColumn<String>(
+      'payload',
+      aliasedName,
+      true,
+      type: i1.DriftSqlType.string,
+      $customConstraints: '',
+    );
+i1.GeneratedColumn<String> _column_80(String aliasedName) =>
+    i1.GeneratedColumn<String>(
+      'draft_id',
+      aliasedName,
+      true,
+      type: i1.DriftSqlType.string,
+      $customConstraints: '',
+    );
+i1.GeneratedColumn<int> _column_81(String aliasedName) =>
+    i1.GeneratedColumn<int>(
+      'revision',
+      aliasedName,
+      false,
+      type: i1.DriftSqlType.int,
+      $customConstraints: 'NOT NULL DEFAULT 1',
+      defaultValue: const i1.CustomExpression('1'),
+    );
+i1.GeneratedColumn<int> _column_82(String aliasedName) =>
+    i1.GeneratedColumn<int>(
+      'uploaded_revision',
+      aliasedName,
+      false,
+      type: i1.DriftSqlType.int,
+      $customConstraints: 'NOT NULL DEFAULT 0',
+      defaultValue: const i1.CustomExpression('0'),
+    );
+i1.GeneratedColumn<int> _column_83(String aliasedName) =>
+    i1.GeneratedColumn<int>(
+      'saved_at',
+      aliasedName,
+      false,
+      type: i1.DriftSqlType.int,
+      $customConstraints: 'NOT NULL',
+    );
+i1.GeneratedColumn<int> _column_84(String aliasedName) =>
+    i1.GeneratedColumn<int>(
+      'uploaded_at',
+      aliasedName,
+      true,
+      type: i1.DriftSqlType.int,
+      $customConstraints: '',
+    );
 i0.MigrationStepWithVersion migrationSteps({
   required Future<void> Function(i1.Migrator m, Schema2 schema) from1To2,
+  required Future<void> Function(i1.Migrator m, Schema3 schema) from2To3,
 }) {
   return (currentVersion, database) async {
     switch (currentVersion) {
@@ -1242,6 +1646,11 @@ i0.MigrationStepWithVersion migrationSteps({
         final migrator = i1.Migrator(database, schema);
         await from1To2(migrator, schema);
         return 2;
+      case 2:
+        final schema = Schema3(database: database);
+        final migrator = i1.Migrator(database, schema);
+        await from2To3(migrator, schema);
+        return 3;
       default:
         throw ArgumentError.value('Unknown migration from $currentVersion');
     }
@@ -1250,6 +1659,7 @@ i0.MigrationStepWithVersion migrationSteps({
 
 i1.OnUpgrade stepByStep({
   required Future<void> Function(i1.Migrator m, Schema2 schema) from1To2,
+  required Future<void> Function(i1.Migrator m, Schema3 schema) from2To3,
 }) => i0.VersionedSchema.stepByStepHelper(
-  step: migrationSteps(from1To2: from1To2),
+  step: migrationSteps(from1To2: from1To2, from2To3: from2To3),
 );

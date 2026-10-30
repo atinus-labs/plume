@@ -90,6 +90,7 @@ final class MailEngine {
   Future<void> start() async {
     if (_started) return;
     _started = true;
+    await store.pruneLocalDrafts();
     _reconcile(await store.accounts());
     _accountsSub = store.watchAccounts().listen(_reconcile);
   }
@@ -208,6 +209,11 @@ final class MailEngine {
   /// messages that moved, so it doesn't pull the rest of the conversation
   /// along.
   Future<MailOperation?> perform(MailOperation operation) async {
+    final rest = await _withoutLocalDrafts(operation);
+    return rest == null ? null : _perform(rest);
+  }
+
+  Future<MailOperation?> _perform(MailOperation operation) async {
     final runtime = _requireRuntime(operation.accountId);
     final mailboxes = await store.mailboxes(operation.accountId);
     final mutation = runtime.provider.localEffect(operation, mailboxes);
@@ -229,6 +235,23 @@ final class MailEngine {
     });
     runtime.kickOperations();
     return undo;
+  }
+
+  /// [operation] without the drafts only on this device, which have
+  /// nothing to change on the server; deleting one discards it. Null when
+  /// nothing is left.
+  Future<MailOperation?> _withoutLocalDrafts(MailOperation operation) async {
+    if (operation case ActionOperation(action: MailAction.trash || MailAction.deleteForever)) {
+      final messageIds = operation.scope == OperationScope.thread
+          ? [for (final m in await store.messagesInThreads(operation.accountId, operation.ids)) m.id]
+          : operation.ids;
+      for (final id in messageIds.map(LocalDraft.idOf).nonNulls) {
+        await discardDraft(operation.accountId, localId: id);
+      }
+    }
+    final rest = [for (final id in operation.ids) if (LocalDraft.idOf(id) == null) id];
+    if (rest.isEmpty) return null;
+    return rest.length == operation.ids.length ? operation : _retarget(operation, operation.scope, rest);
   }
 
   /// Message ids as currently stored; an undo may name messages by the ids
@@ -272,11 +295,17 @@ final class MailEngine {
 
   // Sending ------------------------------------------------------------------
 
-  /// Queues [message] to be sent after [delay] (the undo window). Returns the
-  /// outbox id to pass to [cancelSend].
-  Future<int> send(OutgoingMessage message, {Duration delay = const Duration(seconds: 5)}) async {
+  /// Queues [message] to be sent after [delay] (the undo window), taking
+  /// along draft [localDraftId] it was saved as. Returns the outbox id to
+  /// pass to [cancelSend].
+  Future<int> send(OutgoingMessage message, {Duration delay = const Duration(seconds: 5), int? localDraftId}) async {
     final runtime = _requireRuntime(message.accountId);
-    final id = await store.enqueueOutgoing(message, DateTime.now().add(delay));
+    final id = await store.transaction(() async {
+      // Its server draft, if it got one, is sent in its place (Gmail) or
+      // deleted after sending.
+      final draft = localDraftId == null ? null : await store.takeLocalDraft(localDraftId);
+      return store.enqueueOutgoing(message.copyWith(draftId: draft?.draftId), DateTime.now().add(delay));
+    });
     runtime.kickOutbox();
     return id;
   }
@@ -293,10 +322,43 @@ final class MailEngine {
     _runtimes[entry.message.accountId]?.kickOutbox();
   }
 
-  Future<String> saveDraft(OutgoingMessage message) => _requireRuntime(message.accountId).provider.saveDraft(message);
+  // Drafts -------------------------------------------------------------------
 
-  Future<void> deleteDraft(String accountId, String draftId) =>
-      _requireRuntime(accountId).provider.deleteDraft(draftId);
+  /// Saves [message] as a draft on this device, then uploads it in the
+  /// background, trying again until the server has it. [localId] is the
+  /// draft an earlier save of the same message returned.
+  Future<LocalDraft> saveDraft(OutgoingMessage message, {int? localId}) async {
+    final draft = await store.saveLocalDraft(message, id: localId);
+    _runtimes[message.accountId]?.kickDrafts();
+    return draft;
+  }
+
+  /// Whether the server has [draft] as it was saved, after trying to
+  /// upload it. Does not try while the account is offline.
+  Future<bool> uploadDraft(LocalDraft draft) async {
+    final runtime = _runtimes[draft.accountId];
+    if (runtime == null || runtime.status.isOffline) return false;
+    await runtime.uploadDrafts();
+    final now = await store.localDraft(draft.id);
+    return now == null || now.uploadedRevision >= draft.revision;
+  }
+
+  /// Uploads the account's drafts now, then syncs, so that Drafts shows
+  /// them as the server has them.
+  Future<void> flushDrafts(String accountId) async {
+    final runtime = _runtimes[accountId];
+    if (runtime == null) return;
+    await runtime.uploadDrafts();
+    await runtime.requestSync();
+  }
+
+  /// Discards draft [localId], or the one in server draft [draftId]. The
+  /// server draft is deleted in the background, once the server is
+  /// reachable.
+  Future<void> discardDraft(String accountId, {int? localId, String? draftId}) async {
+    await store.discardLocalDraft(accountId, id: localId, draftId: draftId);
+    _runtimes[accountId]?.kickDrafts();
+  }
 
   Future<String?> draftIdOf(String accountId, String messageId) =>
       _requireRuntime(accountId).provider.draftIdOf(messageId);

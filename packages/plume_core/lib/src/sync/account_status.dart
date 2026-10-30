@@ -35,6 +35,10 @@ final class AccountSyncStatus {
   /// Whether the real-time change stream is currently connected.
   final bool pushConnected;
 
+  /// Offline, or trying again after it was: the server was not reached
+  /// since the last failure.
+  bool get isOffline => phase == SyncPhase.offline || (phase == SyncPhase.syncing && lastError != null);
+
   AccountSyncStatus copyWith({
     SyncPhase? phase,
     DateTime? lastSynced,

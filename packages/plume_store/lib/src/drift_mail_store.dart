@@ -1061,6 +1061,208 @@ WHERE t.account_id = ?1 AND t.id IN (SELECT value FROM json_each(?2))''';
     return rows.isEmpty ? null : _outboxFromRow(rows.first);
   }
 
+  // Drafts kept on this device -------------------------------------------------
+
+  static LocalDraft? _localDraftFromRow(QueryRow r) {
+    final id = r.read<int>('id');
+    final draftId = r.readNullable<String>('draft_id');
+    final payload = r.readNullable<String>('payload');
+    try {
+      return LocalDraft(
+        id: id,
+        accountId: r.read<String>('account_id'),
+        message: payload == null ? null : OutgoingMessageCodec.decode(payload).copyWith(draftId: draftId),
+        draftId: draftId,
+        revision: r.read<int>('revision'),
+        uploadedRevision: r.read<int>('uploaded_revision'),
+      );
+    } on Object catch (e) {
+      _log.warning('Skipping unreadable draft $id: $e');
+      return null;
+    }
+  }
+
+  Future<LocalDraft?> _localDraftWhere(String where, List<Object?> args) async {
+    final rows = await _select('SELECT * FROM local_drafts WHERE $where LIMIT 1', args);
+    return rows.isEmpty ? null : _localDraftFromRow(rows.first);
+  }
+
+  @override
+  Future<LocalDraft> saveLocalDraft(OutgoingMessage message, {int? id}) => db.transaction(() async {
+    // The server draft is the row's to know; the message may not have
+    // caught up with an upload yet.
+    final payload = jsonEncode(OutgoingMessageCodec.toJson(message)..remove('draft'));
+    final now = DateTime.now().millisecondsSinceEpoch;
+    final existing = await _select(
+      'SELECT id FROM local_drafts WHERE account_id = ?1 AND payload IS NOT NULL AND (id = ?2 OR draft_id = ?3) '
+      'ORDER BY id = ?2 DESC LIMIT 1',
+      [message.accountId, id, message.draftId],
+    );
+    final int key;
+    if (existing.isEmpty) {
+      key = await db.customInsert(
+        'INSERT INTO local_drafts (account_id, payload, draft_id, saved_at) VALUES (?, ?, ?, ?)',
+        variables: _vars([message.accountId, payload, message.draftId, now]),
+        updates: {db.localDrafts},
+      );
+    } else {
+      key = existing.first.read<int>('id');
+      await db.customUpdate(
+        'UPDATE local_drafts SET payload = ?2, revision = revision + 1, saved_at = ?3, '
+        'draft_id = coalesce(draft_id, ?4) WHERE id = ?1',
+        variables: _vars([key, payload, now, message.draftId]),
+        updates: {db.localDrafts},
+      );
+    }
+    final draft = (await _localDraftWhere('id = ?1', [key]))!;
+    if (draft.draftId == null) await _showLocalDraft(draft, fromEpochMs(now));
+    return draft;
+  });
+
+  /// Puts [draft], which the server does not have yet, in the account's
+  /// Drafts as a message of its own, with [date].
+  Future<void> _showLocalDraft(LocalDraft draft, DateTime date) async {
+    final m = draft.message!;
+    final mailbox = await _select("SELECT id FROM mailboxes WHERE account_id = ?1 AND role = 'drafts' LIMIT 1", [
+      draft.accountId,
+    ]);
+    if (mailbox.isEmpty) return;
+    final id = LocalDraft.messageIdOf(draft.id);
+    final snippet = m.textBody.replaceAll(RegExp(r'\s+'), ' ').trim();
+    await upsertMessages(draft.accountId, [
+      Message(
+        accountId: draft.accountId,
+        id: id,
+        threadId: m.threadId ?? id,
+        subject: m.subject,
+        from: m.from,
+        to: m.to,
+        cc: m.cc,
+        bcc: m.bcc,
+        date: date,
+        snippet: snippet.length > 200 ? snippet.substring(0, 200) : snippet,
+        isDraft: true,
+        mailboxIds: {mailbox.first.read<String>('id')},
+        attachments: [
+          for (final (i, a) in m.attachments.indexed)
+            AttachmentInfo(
+              partId: '${i + 1}',
+              filename: a.filename,
+              mimeType: a.mimeType,
+              size: a.bytes.length,
+              contentId: a.contentId,
+              isInline: a.contentId != null,
+            ),
+        ],
+        inReplyTo: m.inReplyTo,
+        references: m.references,
+      ),
+    ]);
+    await saveBody(draft.accountId, id, MessageBody(text: m.textBody, html: m.htmlBody));
+  }
+
+  @override
+  Future<LocalDraft?> localDraft(int id) => _localDraftWhere('id = ?1', [id]);
+
+  @override
+  Future<LocalDraft?> localDraftFor(String accountId, String draftId) =>
+      _localDraftWhere('account_id = ?1 AND draft_id = ?2 AND payload IS NOT NULL', [accountId, draftId]);
+
+  @override
+  Future<List<LocalDraft>> localDrafts(String accountId) async => (await _select(
+    'SELECT * FROM local_drafts WHERE account_id = ?1 ORDER BY id',
+    [accountId],
+  )).map(_localDraftFromRow).nonNulls.toList();
+
+  @override
+  Future<bool> markLocalDraftUploaded(int id, {required int revision, required String draftId}) async =>
+      await db.customUpdate(
+        'UPDATE local_drafts SET draft_id = ?2, uploaded_revision = max(uploaded_revision, ?3), uploaded_at = ?4 '
+        'WHERE id = ?1',
+        variables: _vars([id, draftId, revision, DateTime.now().millisecondsSinceEpoch]),
+        updates: {db.localDrafts},
+      ) >
+      0;
+
+  @override
+  Future<LocalDraft?> takeLocalDraft(int id) => db.transaction(() async {
+    final rows = await db.customWriteReturning(
+      'DELETE FROM local_drafts WHERE id = ?1 AND payload IS NOT NULL RETURNING *',
+      variables: _vars([id]),
+      updates: {db.localDrafts},
+      updateKind: UpdateKind.delete,
+    );
+    if (rows.isEmpty) return null;
+    final draft = _localDraftFromRow(rows.first);
+    await deleteMessages(rows.first.read<String>('account_id'), [LocalDraft.messageIdOf(id)]);
+    return draft;
+  });
+
+  @override
+  Future<void> discardLocalDraft(String accountId, {int? id, String? draftId}) => db.transaction(() async {
+    final draft =
+        (id == null ? null : await _localDraftWhere('id = ?1 AND payload IS NOT NULL', [id])) ??
+        (draftId == null ? null : await localDraftFor(accountId, draftId));
+    final serverId = draft?.draftId ?? draftId;
+    if (draft != null) {
+      await deleteMessages(draft.accountId, [LocalDraft.messageIdOf(draft.id)]);
+      if (serverId == null) return deleteLocalDraft(draft.id);
+      await db.customUpdate(
+        'UPDATE local_drafts SET payload = NULL, draft_id = ?2 WHERE id = ?1',
+        variables: _vars([draft.id, serverId]),
+        updates: {db.localDrafts},
+      );
+    } else if (serverId != null) {
+      await db.customInsert(
+        'INSERT INTO local_drafts (account_id, draft_id, saved_at) VALUES (?, ?, ?)',
+        variables: _vars([accountId, serverId, DateTime.now().millisecondsSinceEpoch]),
+        updates: {db.localDrafts},
+      );
+    }
+  });
+
+  @override
+  Future<void> deleteLocalDraft(int id) =>
+      db.customUpdate('DELETE FROM local_drafts WHERE id = ?', variables: _vars([id]), updates: {db.localDrafts});
+
+  @override
+  Future<void> settleLocalDrafts(String accountId, {required DateTime uploadedBefore}) => db.transaction(() async {
+    final shown = {
+      for (final r in await _select(
+        // The prefix as a range, so that the (account_id, id) index finds it.
+        "SELECT id FROM messages WHERE account_id = ?1 AND id >= 'local-draft:' AND id < 'local-draft;'",
+        [accountId],
+      ))
+        r.read<String>('id'),
+    };
+    final waiting = await _select(
+      'SELECT * FROM local_drafts WHERE account_id = ?1 AND payload IS NOT NULL '
+      'AND (draft_id IS NULL OR uploaded_at >= ?2)',
+      [accountId, uploadedBefore.millisecondsSinceEpoch],
+    );
+    final keep = <String>{};
+    for (final r in waiting) {
+      final draft = _localDraftFromRow(r);
+      if (draft == null) continue;
+      final id = LocalDraft.messageIdOf(draft.id);
+      if (shown.contains(id)) {
+        keep.add(id);
+      } else if (draft.draftId == null) {
+        await _showLocalDraft(draft, fromEpochMs(r.read<int>('saved_at')));
+      }
+    }
+    await deleteMessages(accountId, shown.difference(keep).toList());
+  });
+
+  @override
+  Future<void> pruneLocalDrafts() => db.customUpdate(
+    'DELETE FROM local_drafts WHERE payload IS NOT NULL AND uploaded_revision >= revision '
+    // Shown until a sync brings the server's copy, and opened from there.
+    'AND NOT EXISTS (SELECT 1 FROM messages m WHERE m.account_id = local_drafts.account_id '
+    "AND m.id = 'local-draft:' || local_drafts.id)",
+    updates: {db.localDrafts},
+  );
+
   // Settings -------------------------------------------------------------------
 
   @override

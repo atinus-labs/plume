@@ -57,6 +57,52 @@ final class OutboxEntry {
   final String? lastError;
 }
 
+/// A draft kept on this device until the server has it, so that what is
+/// written offline is not lost. One that was never uploaded shows in the
+/// account's Drafts mailbox as a message of its own (see [messageIdOf]).
+final class LocalDraft {
+  const LocalDraft({
+    required this.id,
+    required this.accountId,
+    required this.message,
+    required this.draftId,
+    required this.revision,
+    required this.uploadedRevision,
+  });
+
+  final int id;
+  final String accountId;
+
+  /// The draft as last written, its `draftId` set to [draftId]. Null once
+  /// discarded: the row then stays until the server draft is deleted.
+  final OutgoingMessage? message;
+
+  /// The server draft holding it, once it has been uploaded.
+  final String? draftId;
+
+  /// Bumped by every save.
+  final int revision;
+
+  /// The revision the server has; 0 for none.
+  final int uploadedRevision;
+
+  bool get isDiscarded => message == null;
+
+  /// Whether the server has it as last written.
+  bool get isUploaded => uploadedRevision >= revision;
+
+  static const _prefix = 'local-draft:';
+
+  /// The message (and, for a new message, thread) id standing for draft
+  /// [id] in the mail tables while the server does not have it.
+  static String messageIdOf(int id) => '$_prefix$id';
+
+  /// The draft a message or thread id stands for, or null when it is a
+  /// server id.
+  static int? idOf(String messageId) =>
+      messageId.startsWith(_prefix) ? int.tryParse(messageId.substring(_prefix.length)) : null;
+}
+
 /// The complete local store: provider-facing [SyncStore] plus the reactive
 /// read API used by the UI and the queues used by the sync engine.
 abstract interface class MailStore implements SyncStore {
@@ -130,6 +176,46 @@ abstract interface class MailStore implements SyncStore {
   /// Removes an outbox entry, returning it (for undo-send). Returns null when
   /// it is already being sent.
   Future<OutboxEntry?> takeOutgoing(int id);
+
+  // Drafts kept on this device ---------------------------------------------
+
+  /// Saves [message] as draft [id], or as a new draft when [id] is null or
+  /// was sent or discarded. A new draft for a server draft that is kept
+  /// already ([OutgoingMessage.draftId]) updates that one instead. Until
+  /// the draft is uploaded, it shows in the account's Drafts mailbox.
+  Future<LocalDraft> saveLocalDraft(OutgoingMessage message, {int? id});
+
+  Future<LocalDraft?> localDraft(int id);
+
+  /// The draft kept for server draft [draftId], unless discarded.
+  Future<LocalDraft?> localDraftFor(String accountId, String draftId);
+
+  /// The account's drafts, oldest first.
+  Future<List<LocalDraft>> localDrafts(String accountId);
+
+  /// Records that the server has [revision] of draft [id] as [draftId].
+  /// Returns false when the draft was sent meanwhile.
+  Future<bool> markLocalDraftUploaded(int id, {required int revision, required String draftId});
+
+  /// Removes draft [id] to send it, returning it. Null when it was
+  /// discarded or is gone.
+  Future<LocalDraft?> takeLocalDraft(int id);
+
+  /// Discards draft [id] (or the one kept for [draftId]). When a server
+  /// draft holds it, the row stays, without its message, until
+  /// [deleteLocalDraft] after the server draft is deleted.
+  Future<void> discardLocalDraft(String accountId, {int? id, String? draftId});
+
+  Future<void> deleteLocalDraft(int id);
+
+  /// After a sync: takes out of the mail tables the drafts the server had
+  /// before [uploadedBefore], as the sync brought in its own copy, and puts
+  /// back the ones not uploaded yet that a full resync wiped.
+  Future<void> settleLocalDrafts(String accountId, {required DateTime uploadedBefore});
+
+  /// Forgets drafts the server has as last written. Call at start, when no
+  /// compose window has them open.
+  Future<void> pruneLocalDrafts();
 
   // Settings ---------------------------------------------------------------
 

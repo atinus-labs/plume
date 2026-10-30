@@ -38,6 +38,7 @@ final class ComposeRequest {
     this.inReplyTo,
     this.references = const [],
     this.draftId,
+    this.localDraftId,
     this.attachmentsFrom,
     this.attachments = const [],
   });
@@ -67,6 +68,9 @@ final class ComposeRequest {
   final String? inReplyTo;
   final List<String> references;
   final String? draftId;
+
+  /// The draft kept on this device that the window carries on.
+  final int? localDraftId;
 
   /// The message whose attachments come along: a forward's original, or the
   /// draft being edited.
@@ -179,8 +183,10 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
   }
 
   /// Re-opens a message taken back by undo-send or a failed send, or one
-  /// just closed.
-  void reopen(OutgoingMessage message) {
+  /// just closed, [localDraftId] being the draft it was saved as.
+  void reopen(OutgoingMessage message, {int? localDraftId, Rect? origin}) {
+    final open = _windowWith(localDraftId: localDraftId);
+    if (open != null) return _bringForward(open.id);
     _open(_edit(
       accountId: message.accountId,
       to: message.to,
@@ -193,8 +199,9 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
       inReplyTo: message.inReplyTo,
       references: message.references,
       draftId: message.draftId,
+      localDraftId: localDraftId,
       attachments: message.attachments,
-    ));
+    ), origin: origin);
   }
 
   /// Opens a saved [draft] to carry on writing it. When it is open already,
@@ -206,7 +213,18 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
     final String? draftId;
     final Message message;
     final MessageBody? saved;
+    final LocalDraft? local;
     try {
+      // Written here, and not on the server yet.
+      if (LocalDraft.idOf(draft.id) case final localId?) {
+        final kept = (await store.localDraft(localId))?.message;
+        if (kept == null) {
+          showSnack('This draft was discarded');
+        } else {
+          reopen(kept, localDraftId: localId, origin: origin);
+        }
+        return;
+      }
       // Gmail lists attachments once the body is in, so the message is read
       // again after it.
       Future<(Message, MessageBody?)> load() async {
@@ -221,6 +239,7 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
       final loaded = await (engine.draftIdOf(draft.accountId, draft.id), load()).wait;
       draftId = loaded.$1;
       (message, saved) = loaded.$2;
+      local = draftId == null ? null : await store.localDraftFor(draft.accountId, draftId);
     } on Object {
       showSnack('Couldn’t open the draft');
       return;
@@ -233,8 +252,12 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
       unawaited(engine.syncAccount(draft.accountId));
       return;
     }
-    final open = state.where((r) => (_draftIds[r.id] ?? r.draftId) == draftId).firstOrNull;
+    final open = _windowWith(localDraftId: local?.id, draftId: draftId);
     if (open != null) return _bringForward(open.id);
+    // Changes made here that the server does not have yet are the newer.
+    if (local?.message case final kept? when !local!.isUploaded) {
+      return reopen(kept, localDraftId: local.id, origin: origin);
+    }
     _open(
       _edit(
         accountId: message.accountId,
@@ -249,11 +272,21 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
         inReplyTo: message.inReplyTo,
         references: message.references,
         draftId: draftId,
+        localDraftId: local?.id,
         attachmentsFrom: message.hasAttachments ? message : null,
       ),
       origin: origin,
     );
   }
+
+  /// The window carrying on draft [localDraftId], or server draft [draftId].
+  ComposeRequest? _windowWith({int? localDraftId, String? draftId}) => state
+      .where(
+        (r) =>
+            (localDraftId != null && (_localDraftIds[r.id] ?? r.localDraftId) == localDraftId) ||
+            (draftId != null && r.draftId == draftId),
+      )
+      .firstOrNull;
 
   /// A window for editing a message written before.
   ComposeRequest _edit({
@@ -268,6 +301,7 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
     required String? inReplyTo,
     required List<String> references,
     required String? draftId,
+    int? localDraftId,
     List<OutgoingAttachment> attachments = const [],
     Message? attachmentsFrom,
   }) {
@@ -294,6 +328,7 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
       inReplyTo: inReplyTo,
       references: references,
       draftId: draftId,
+      localDraftId: localDraftId,
       attachments: attachments,
       attachmentsFrom: attachmentsFrom,
     );
@@ -305,12 +340,12 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
   /// Drafts being loaded to open, by message id.
   final _loading = <String>{};
 
-  /// The draft each window last saved to.
-  final _draftIds = <int, String>{};
+  /// The draft kept on this device that each window last saved to.
+  final _localDraftIds = <int, int>{};
 
-  /// Window [id] saved its draft as [draftId].
-  void saved(int id, String draftId) {
-    if (state.any((r) => r.id == id)) _draftIds[id] = draftId;
+  /// Window [id] saved its draft as [localDraftId].
+  void saved(int id, int localDraftId) {
+    if (state.any((r) => r.id == id)) _localDraftIds[id] = localDraftId;
   }
 
   /// Whether window [id] closed by sending, which it leaves differently.
@@ -323,7 +358,7 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
 
   void close(int id, {bool sent = false}) {
     if (sent) _sent.add(id);
-    _draftIds.remove(id);
+    _localDraftIds.remove(id);
     state = [
       for (final r in state)
         if (r.id != id) r,
