@@ -32,6 +32,12 @@ String normalizeContentId(String cid) {
   return decoded.replaceAll(RegExp('[<>]'), '').trim().toLowerCase();
 }
 
+/// [html] without its tracking pixels.
+String withoutTrackingPixels(String html) => html.replaceAllMapped(_imgTag, (m) {
+      final attrs = _attributes(m[0]!);
+      return _isRemote(attrs['src']?.trim() ?? '') && _isTrackingPixel(attrs) ? '' : m[0]!;
+    });
+
 /// Builds the document the renderer loads from a message's [html].
 ///
 /// A Content Security Policy at the top of the document blocks remote

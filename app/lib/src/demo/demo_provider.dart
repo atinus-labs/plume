@@ -199,7 +199,14 @@ final class DemoProvider implements MailProvider {
       mailboxIds: const {'DRAFT'},
       attachments: [
         for (final (i, a) in message.attachments.indexed)
-          AttachmentInfo(partId: '${i + 2}', filename: a.filename, mimeType: a.mimeType, size: a.bytes.length),
+          AttachmentInfo(
+            partId: '${i + 2}',
+            filename: a.filename,
+            mimeType: a.mimeType,
+            size: a.bytes.length,
+            contentId: a.contentId,
+            isInline: a.contentId != null,
+          ),
       ],
       inReplyTo: message.inReplyTo,
       references: message.references,

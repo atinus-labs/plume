@@ -19,6 +19,7 @@ import '../../state/services.dart';
 import '../../state/settings.dart';
 import '../actions.dart';
 import '../common/format.dart';
+import '../reader/mail_document.dart' show normalizeContentId, referencedContentIds;
 import 'body_editor.dart';
 import 'compose_host.dart';
 import 'format_bar.dart';
@@ -89,12 +90,25 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
   final _toKey = GlobalKey<RecipientFieldState>();
   final _ccKey = GlobalKey<RecipientFieldState>();
   final _bccKey = GlobalKey<RecipientFieldState>();
-  late List<OutgoingAttachment> _attachments = [...widget.request.attachments];
+  late List<OutgoingAttachment> _attachments = [
+    for (final a in widget.request.attachments)
+      if (a.contentId == null) a,
+  ];
   bool _loadingAttachments = false;
 
-  /// Done once the attachments that come along are in.
+  /// Done once the quote and the attachments that come along are in.
   Future<void> _attachmentsLoaded = Future.value();
   late String? _quotedText = widget.request.quote;
+
+  /// The quote in the HTML part: the original's own HTML, so that it keeps
+  /// its layout. Null to write [_quotedText] there instead.
+  late String? _quotedHtml = widget.request.quoteHtml;
+
+  /// The images [_quotedHtml] shows, sent along with it.
+  late List<OutgoingAttachment> _quotedImages = [
+    for (final a in widget.request.attachments)
+      if (a.contentId != null) a,
+  ];
   late bool _showQuote = widget.request.mode == ComposeMode.forward;
   bool _minimized = false;
   late final bool _animateIn = widget.animateIn;
@@ -128,10 +142,14 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     _subject.addListener(_scheduleSave);
     _body.addListener(_scheduleSave);
     _plainBody.addListener(_scheduleSave);
-    unawaited(_loadQuote());
-    if (widget.request.attachmentsFrom != null) {
-      _attachmentsLoaded = _loadAttachments();
-    }
+    _attachmentsLoaded = [
+      _loadQuote(),
+      if (widget.request.attachmentsFrom case final m?) ...[
+        _loadAttachments(),
+        // A draft's quote shows the images it was saved with.
+        if (widget.request.quoteHtml case final html?) _loadQuotedImages(html, m),
+      ],
+    ].wait;
     // Asked for outright: autofocus gives way to the shell, which holds focus
     // for the mail shortcuts.
     WidgetsBinding.instance.addPostFrameCallback((_) {
@@ -165,16 +183,46 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     final m = widget.request.quoted;
     if (m == null || widget.request.quote != null) return;
     final body = await ref.read(storeProvider).body(m.accountId, m.id);
+    final html = body?.html;
     var text = body?.text;
-    if ((text == null || text.trim().isEmpty) && body?.html != null)
-      text = _htmlToText(body!.html!);
+    if ((text == null || text.trim().isEmpty) && html != null) text = htmlToMailText(html);
     text ??= m.snippet;
+    final forward = widget.request.mode == ComposeMode.forward;
+    final quotable = html == null ? '' : quotableHtml(html);
+    final quotedHtml = quotable.isEmpty
+        ? null
+        : forward
+        ? forwardQuoteHtml(m, quotable)
+        : replyQuoteHtml(m, quotable);
     if (!mounted) return;
     setState(() {
-      _quotedText = widget.request.mode == ComposeMode.forward
-          ? forwardQuote(m, text!)
-          : replyQuote(m, text!);
+      _quotedText = forward ? forwardQuote(m, text!) : replyQuote(m, text!);
+      _quotedHtml = quotedHtml;
     });
+    if (quotedHtml != null) await _loadQuotedImages(quotedHtml, m, provided: body!.inlineParts);
+  }
+
+  /// Brings the images of [m] that [html] shows, to send along with the
+  /// quote. [provided] are those that came with the body.
+  Future<void> _loadQuotedImages(String html, Message m, {Map<String, Uint8List> provided = const {}}) async {
+    final ids = referencedContentIds(html);
+    if (ids.isEmpty) return;
+    final have = {for (final e in provided.entries) normalizeContentId(e.key): e.value};
+    final engine = ref.read(engineProvider);
+    final images = await Future.wait([
+      for (final info in m.attachments)
+        if (info.contentId case final id? when ids.contains(normalizeContentId(id)))
+          () async {
+            try {
+              final bytes = have[normalizeContentId(id)] ?? await engine.attachment(m.accountId, m.id, info);
+              return OutgoingAttachment(filename: info.filename, mimeType: info.mimeType, bytes: bytes, contentId: id);
+            } on Object {
+              // Left out, to show as a missing image.
+              return null;
+            }
+          }(),
+    ]);
+    _quotedImages = images.nonNulls.toList();
   }
 
   Future<void> _loadAttachments() async {
@@ -308,8 +356,8 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
       textBody: mailText(typed, signature: signature, quote: quote),
       htmlBody: _plainText
           ? null
-          : mailHtml(_body.document.toMailHtml(), signature: signature, quote: quote),
-      attachments: _attachments,
+          : mailHtml(_body.document.toMailHtml(), signature: signature, quote: quote, quoteHtml: _quotedHtml),
+      attachments: [..._attachments, if (!_plainText && _quotedHtml != null) ..._quotedImages],
       threadId: widget.request.threadId,
       inReplyTo: widget.request.inReplyTo,
       references: widget.request.references,
@@ -1178,23 +1226,3 @@ String _mimeFor(String name) => switch (p.extension(name).toLowerCase()) {
   '.mp4' => 'video/mp4',
   _ => 'application/octet-stream',
 };
-
-/// Rough HTML to text for quoting.
-String _htmlToText(String html) {
-  var s = html
-      .replaceAll(
-        RegExp(r'<(script|style)[^>]*>[\s\S]*?</\1>', caseSensitive: false),
-        '',
-      )
-      .replaceAll(RegExp(r'<br\s*/?>', caseSensitive: false), '\n')
-      .replaceAll(RegExp(r'</(p|div|tr|li|h\d)>', caseSensitive: false), '\n')
-      .replaceAll(RegExp(r'<[^>]+>'), '');
-  s = s
-      .replaceAll('&nbsp;', ' ')
-      .replaceAll('&amp;', '&')
-      .replaceAll('&lt;', '<')
-      .replaceAll('&gt;', '>')
-      .replaceAll('&quot;', '"')
-      .replaceAll('&#39;', "'");
-  return s.replaceAll(RegExp(r'\n{3,}'), '\n\n').trim();
-}

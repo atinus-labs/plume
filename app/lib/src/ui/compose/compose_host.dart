@@ -34,6 +34,7 @@ final class ComposeRequest {
     this.plainText = false,
     this.quoted,
     this.quote,
+    this.quoteHtml,
     this.threadId,
     this.inReplyTo,
     this.references = const [],
@@ -64,6 +65,9 @@ final class ComposeRequest {
   /// The quote as written before, for a message being edited again; takes
   /// the place of [quoted].
   final String? quote;
+
+  /// [quote] as written before in the HTML part, when it had one.
+  final String? quoteHtml;
   final String? threadId;
   final String? inReplyTo;
   final List<String> references;
@@ -73,8 +77,10 @@ final class ComposeRequest {
   final int? localDraftId;
 
   /// The message whose attachments come along: a forward's original, or the
-  /// draft being edited.
+  /// draft being edited, which also brings the images its [quoteHtml] shows.
   final Message? attachmentsFrom;
+
+  /// Attachments, and the images [quoteHtml] shows, which have a Content-ID.
   final List<OutgoingAttachment> attachments;
 }
 
@@ -273,7 +279,7 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
         references: message.references,
         draftId: draftId,
         localDraftId: local?.id,
-        attachmentsFrom: message.hasAttachments ? message : null,
+        attachmentsFrom: message.attachments.isNotEmpty ? message : null,
       ),
       origin: origin,
     );
@@ -324,6 +330,7 @@ class ComposeNotifier extends Notifier<List<ComposeRequest>> {
       html: body.html,
       plainText: body.html == null,
       quote: body.quote,
+      quoteHtml: body.quoteHtml,
       threadId: threadId,
       inReplyTo: inReplyTo,
       references: references,

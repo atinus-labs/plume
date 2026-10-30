@@ -139,6 +139,55 @@ void main() {
     expect(body.text, contains('Tickets are booked. See you Friday.'));
   });
 
+  testWidgets('a forwarded HTML message keeps its layout and images, in its draft too', (tester) async {
+    await start(tester);
+    final thread = ref.read(visibleThreadsProvider).value!.first;
+    final original = (await t.runAsync(() => services.store.messagesInThreads(thread.accountId, [thread.id])))!.last
+        .copyWith(attachments: const [
+      AttachmentInfo(
+          partId: '2', filename: 'logo.png', mimeType: 'image/png', size: 4, contentId: 'logo@shop', isInline: true),
+      AttachmentInfo(partId: '3', filename: 'receipt.pdf', mimeType: 'application/pdf', size: 64),
+    ]);
+    await t.runAsync(() => services.store.saveBody(original.accountId, original.id, MessageBody(
+          html: '<html><head><style>p { color: red }</style></head><body><img src="cid:logo@shop" alt="Shop">'
+              '<p><a href="https://shop.example/order/1">View order</a></p></body></html>',
+          inlineParts: {'logo@shop': Uint8List.fromList([137, 80, 78, 71])},
+        )));
+
+    Future<void> expectQuoted() async {
+      expect(find.text('Forwarded message'), findsOneWidget);
+      // The image goes with the quote, not among the attachments.
+      expect(find.textContaining('receipt.pdf'), findsOneWidget);
+      expect(find.textContaining('logo.png'), findsNothing);
+      await t.tap(find.byTooltip('Save & close (Esc)'));
+      await settle();
+      // After the next sync, Drafts shows only the server's copy.
+      await t.runAsync(() => services.engine.syncAccount(original.accountId));
+      await settle();
+      final saved = (await drafts()).where((m) => m.subject == 'Fwd: ${original.subject}').single;
+      final body = (await t.runAsync(() => services.store.body(saved.accountId, saved.id)))!;
+      expect(body.html,
+          contains('<img src="cid:logo@shop" alt="Shop"><p><a href="https://shop.example/order/1">View order</a></p>'));
+      expect(body.html, isNot(contains('color: red')));
+      expect(body.text, contains('View order <https://shop.example/order/1>'));
+      expect(
+        [for (final a in saved.attachments) (a.filename, a.contentId)],
+        [('receipt.pdf', null), ('logo.png', 'logo@shop')],
+      );
+    }
+
+    ref.read(composeProvider.notifier).forward(original);
+    await settle();
+    await expectQuoted();
+
+    // Opened from Drafts and saved again, it stays the same.
+    ref.read(viewProvider.notifier).show(const MailView(ViewKind.drafts));
+    await settle();
+    await t.tap(find.text('Fwd: ${original.subject}'));
+    await settle();
+    await expectQuoted();
+  });
+
   testWidgets('letters typed into the message are text, not mail shortcuts', (tester) async {
     await start(tester);
     final thread = ref.read(visibleThreadsProvider).value!.first;

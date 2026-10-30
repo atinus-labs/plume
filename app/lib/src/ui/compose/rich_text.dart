@@ -365,7 +365,9 @@ String _escape(String s) => const HtmlEscape(HtmlEscapeMode.element).convert(s);
 
 /// Makes bare web addresses in escaped HTML text clickable.
 String linkifyHtml(String escaped) => escaped.replaceAllMapped(
-    RegExp(r'(https?://[^\s<>"]+[^\s<>".,;:!?)\]])'), (m) => '<a href="${m[1]}">${m[1]}</a>');
+    // An escaped `<` or `>` ends the link, as in `text <url>`.
+    RegExp(r'(https?://(?:[^\s<>"&]|&(?!lt;|gt;))*[^\s<>"&.,;:!?)\]])'),
+    (m) => '<a href="${m[1]}">${m[1]}</a>');
 
 /// Normalises a typed link: bare addresses become `mailto:`, anything else
 /// without a scheme `https://`. Returns null for an empty or unsafe link.
