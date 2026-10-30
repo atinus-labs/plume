@@ -191,10 +191,7 @@ class _HomeShellState extends ConsumerState<HomeShell> {
   /// Gmail-compatible single-key shortcuts. Ignored while typing.
   KeyEventResult _handleKey(KeyEvent event) {
     if (event is! KeyDownEvent && event is! KeyRepeatEvent) return KeyEventResult.ignored;
-    final primary = FocusManager.instance.primaryFocus;
-    final typing = primary?.context?.findAncestorWidgetOfExactType<EditableText>() != null ||
-        primary?.context?.widget is EditableText;
-    if (typing) return KeyEventResult.ignored;
+    if (_typing()) return KeyEventResult.ignored;
     final keyboard = HardwareKeyboard.instance;
     if (keyboard.isControlPressed || keyboard.isAltPressed || keyboard.isMetaPressed) {
       if (keyboard.isControlPressed && event.logicalKey == LogicalKeyboardKey.comma) {
@@ -271,6 +268,19 @@ class _HomeShellState extends ConsumerState<HomeShell> {
       _ => false,
     };
     return result ? KeyEventResult.handled : KeyEventResult.ignored;
+  }
+
+  /// Whether focus is somewhere that takes typed text: a text field or the
+  /// message body, which is a text input client but not an [EditableText].
+  static bool _typing() {
+    final context = FocusManager.instance.primaryFocus?.context;
+    if (context == null) return false;
+    bool takesText(Element e) => e is StatefulElement && e.state is TextInputClient;
+    var typing = takesText(context as Element);
+    if (!typing) {
+      context.visitAncestorElements((e) => !(typing = takesText(e)));
+    }
+    return typing;
   }
 }
 

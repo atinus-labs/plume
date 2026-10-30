@@ -133,6 +133,41 @@ void main() {
     expect((await drafts()).map((m) => m.subject), isNot(contains('Packing list for Lisbon')));
   });
 
+  testWidgets('letters typed into the message are text, not mail shortcuts', (tester) async {
+    await start(tester);
+    final thread = ref.read(visibleThreadsProvider).value!.first;
+    openThread(ref, thread);
+    await settle();
+    await t.sendKeyEvent(LogicalKeyboardKey.keyC);
+    await settle();
+    expect(find.byType(ComposePanel), findsOneWidget);
+
+    await t.tap(find.byType(QuillEditor));
+    await t.pump();
+    for (final key in [
+      LogicalKeyboardKey.keyE, // archive
+      LogicalKeyboardKey.keyR, // reply
+      LogicalKeyboardKey.keyA, // reply all
+      LogicalKeyboardKey.keyF, // forward
+      LogicalKeyboardKey.keyC, // compose
+      LogicalKeyboardKey.keyJ, // next conversation
+      LogicalKeyboardKey.keyS, // star
+      LogicalKeyboardKey.keyX, // select
+      LogicalKeyboardKey.slash, // search
+    ]) {
+      // Unhandled, so the platform hands it to the editor as typed text.
+      expect(await t.sendKeyEvent(key), isFalse, reason: key.keyLabel);
+    }
+    await settle();
+
+    expect(find.byType(ComposePanel), findsOneWidget);
+    expect(ref.read(openThreadProvider), keyOf(thread));
+    expect(ref.read(selectionProvider), isEmpty);
+    final still = ref.read(visibleThreadsProvider).value!.firstWhere((x) => x.key == thread.key);
+    expect(still.isFlagged, thread.isFlagged);
+    expect(FocusManager.instance.primaryFocus?.context?.findAncestorWidgetOfExactType<QuillEditor>(), isNotNull);
+  });
+
   testWidgets('a message closed by mistake opens again from the snackbar', (tester) async {
     await start(tester);
     ref.read(composeProvider.notifier).newMessage();
