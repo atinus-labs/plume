@@ -495,47 +495,67 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
         : (widget.dockLeft ? Alignment.bottomLeft : Alignment.bottomRight);
     final canDrag = !widget.maximized && !full;
 
-    final panel = TweenAnimationBuilder<double>(
-      tween: Tween(begin: _animateIn ? 0 : 1, end: 1),
-      duration: Spring.spatial.duration,
-      curve: Spring.spatial.curve,
-      builder: (context, t, child) => Transform(
-        alignment: alignment,
-        transform: Matrix4.identity()
-          ..translateByDouble(0, (1 - t) * 40, 0, 1)
-          ..scaleByDouble(0.92 + 0.08 * t, 0.92 + 0.08 * t, 1, 1),
-        child: Opacity(opacity: unit(t), child: child),
-      ),
-      child: CallbackShortcuts(
-        bindings: {
-          const SingleActivator(LogicalKeyboardKey.enter, control: true): _send,
-          const SingleActivator(LogicalKeyboardKey.escape): () =>
-              unawaited(_closeKeepingDraft()),
-        },
-        child: GestureDetector(
-          behavior: HitTestBehavior.translucent,
-          dragStartBehavior: DragStartBehavior.down,
-          onPanUpdate: canDrag ? (details) => _handleDrag(details.delta) : null,
-          child: Padding(
-            padding: EdgeInsets.only(bottom: widget.maximized || full ? 0 : 16),
-            child: AnimatedContainer(
-              duration: Spring.spatial.duration,
-              curve: Spring.spatial.curve,
-              width: width,
-              height: height,
-              child: Material(
-                color: scheme.surfaceContainerLow,
-                elevation: full ? 0 : 8,
-                shadowColor: scheme.shadow.withValues(alpha: 0.45),
-                shape: RoundedRectangleBorder(
-                  borderRadius: Corners.all(full ? 0 : Corners.extraLarge),
-                ),
-                clipBehavior: Clip.antiAlias,
-                child: Column(
-                  children: [
-                    if (minimized)
-                      Expanded(
-                        child: _TitleBar(
+    // Tab follows the window's own fields, top to bottom. Ordered among
+    // everything else on screen, it would leave from Subject for whatever
+    // lies beside the window.
+    final panel = FocusTraversalGroup(
+      policy: ReadingOrderTraversalPolicy(),
+      child: TweenAnimationBuilder<double>(
+        tween: Tween(begin: _animateIn ? 0 : 1, end: 1),
+        duration: Spring.spatial.duration,
+        curve: Spring.spatial.curve,
+        builder: (context, t, child) => Transform(
+          alignment: alignment,
+          transform: Matrix4.identity()
+            ..translateByDouble(0, (1 - t) * 40, 0, 1)
+            ..scaleByDouble(0.92 + 0.08 * t, 0.92 + 0.08 * t, 1, 1),
+          child: Opacity(opacity: unit(t), child: child),
+        ),
+        child: CallbackShortcuts(
+          bindings: {
+            const SingleActivator(LogicalKeyboardKey.enter, control: true): _send,
+            const SingleActivator(LogicalKeyboardKey.escape): () =>
+                unawaited(_closeKeepingDraft()),
+          },
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            dragStartBehavior: DragStartBehavior.down,
+            onPanUpdate: canDrag ? (details) => _handleDrag(details.delta) : null,
+            child: Padding(
+              padding: EdgeInsets.only(bottom: widget.maximized || full ? 0 : 16),
+              child: AnimatedContainer(
+                duration: Spring.spatial.duration,
+                curve: Spring.spatial.curve,
+                width: width,
+                height: height,
+                child: Material(
+                  color: scheme.surfaceContainerLow,
+                  elevation: full ? 0 : 8,
+                  shadowColor: scheme.shadow.withValues(alpha: 0.45),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: Corners.all(full ? 0 : Corners.extraLarge),
+                  ),
+                  clipBehavior: Clip.antiAlias,
+                  child: Column(
+                    children: [
+                      if (minimized)
+                        Expanded(
+                          child: _TitleBar(
+                            title: title,
+                            minimized: minimized,
+                            maximized: widget.maximized,
+                            fullScreen: full,
+                            onMinimize: () =>
+                                setState(() => _minimized = !_minimized),
+                            onMaximize: () => ref
+                                .read(maximizedComposeProvider.notifier)
+                                .set(widget.maximized ? null : widget.request.id),
+                            onClose: () => unawaited(_closeKeepingDraft()),
+                            onDrag: canDrag ? _handleDrag : null,
+                          ),
+                        )
+                      else ...[
+                        _TitleBar(
                           title: title,
                           minimized: minimized,
                           maximized: widget.maximized,
@@ -548,24 +568,10 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
                           onClose: () => unawaited(_closeKeepingDraft()),
                           onDrag: canDrag ? _handleDrag : null,
                         ),
-                      )
-                    else ...[
-                      _TitleBar(
-                        title: title,
-                        minimized: minimized,
-                        maximized: widget.maximized,
-                        fullScreen: full,
-                        onMinimize: () =>
-                            setState(() => _minimized = !_minimized),
-                        onMaximize: () => ref
-                            .read(maximizedComposeProvider.notifier)
-                            .set(widget.maximized ? null : widget.request.id),
-                        onClose: () => unawaited(_closeKeepingDraft()),
-                        onDrag: canDrag ? _handleDrag : null,
-                      ),
-                      Expanded(child: _form(theme)),
+                        Expanded(child: _form(theme)),
+                      ],
                     ],
-                  ],
+                  ),
                 ),
               ),
             ),

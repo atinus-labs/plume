@@ -7,15 +7,13 @@ import 'package:plume/src/state/mail.dart';
 import 'package:plume/src/state/navigation.dart';
 import 'package:plume/src/state/services.dart';
 import 'package:plume/src/ui/actions.dart';
-import 'package:plume/src/ui/app.dart';
 import 'package:plume/src/ui/compose/compose_host.dart';
 import 'package:plume/src/ui/compose/compose_panel.dart';
 import 'package:plume/src/ui/reader/message_card.dart';
 import 'package:plume/src/ui/reader/reader_pane.dart';
 import 'package:plume_core/plume_core.dart';
-import 'package:plume_store/plume_store.dart';
 
-import 'support/demo_services.dart';
+import 'support/demo_app.dart';
 
 /// The demo account, which comes with a reply in Tokyo and a new message
 /// in Drafts.
@@ -23,37 +21,14 @@ void main() {
   late WidgetTester t;
   late WidgetRef ref;
   late Services services;
-
-  Future<void> settle() async {
-    for (var i = 0; i < 12; i++) {
-      await t.runAsync(() => Future<void>.delayed(const Duration(milliseconds: 30)));
-      await t.pump(const Duration(milliseconds: 100));
-    }
-  }
+  late Future<void> Function() settle;
 
   Future<void> start(WidgetTester tester) async {
+    final app = await DemoApp.start(tester);
     t = tester;
-    tester.view.physicalSize = const Size(1600, 1000);
-    tester.view.devicePixelRatio = 1;
-    addTearDown(tester.view.reset);
-    services = (await tester.runAsync(demoServices))!;
-    final container = ProviderContainer(overrides: [servicesProvider.overrideWithValue(services)]);
-    await tester.pumpWidget(UncontrolledProviderScope(
-      container: container,
-      child: Consumer(builder: (context, r, child) {
-        ref = r;
-        return child!;
-      }, child: const PlumeApp()),
-    ));
-    await settle();
-    addTearDown(() async {
-      Toaster.instance.clear();
-      await tester.pumpWidget(const SizedBox());
-      container.dispose();
-      await tester.pump(const Duration(seconds: 30));
-      await tester.runAsync(services.engine.dispose);
-      await tester.runAsync((services.store as DriftMailStore).close);
-    });
+    ref = app.ref;
+    services = app.services;
+    settle = app.settle;
   }
 
   Future<List<Message>> drafts() async => [
