@@ -1,0 +1,83 @@
+# Builds Plume as an AppImage from every push to main and publishes it as the
+# "continuous" pre-release, replacing the previous build:
+#
+#   https://github.com/atinus-labs/plume/releases/tag/continuous
+#
+# Run it by hand from the Actions tab to rebuild without pushing; on a branch
+# other than main, the AppImage is only attached to the run.
+name: AppImage
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+concurrency:
+  group: appimage-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  FLUTTER_VERSION: 3.47.8
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # The Ubuntu that tool/appimage/build.sh uses, so the AppImage runs on any
+    # distro with glibc 2.35 or newer.
+    container: ubuntu:22.04
+    defaults:
+      run:
+        shell: bash
+    outputs:
+      file: ${{ steps.build.outputs.file }}
+    steps:
+      - name: Install git
+        run: |
+          apt-get update -qq
+          apt-get install -y -qq --no-install-recommends ca-certificates git >/dev/null
+      - uses: actions/checkout@v7
+      - name: Install Flutter
+        run: git clone --depth 1 --branch "$FLUTTER_VERSION" https://github.com/flutter/flutter.git /opt/flutter
+      - name: Build
+        id: build
+        run: |
+          version=$(sed -n 's/^version: *\([^+]*\).*/\1/p' app/pubspec.yaml)-${GITHUB_SHA::7}
+          # inside.sh leaves the AppImage here, as it does for build.sh.
+          mkdir -p /work/out
+          VERSION=$version FLUTTER_ROOT=/opt/flutter bash tool/appimage/inside.sh
+          echo "file=Plume-$version-x86_64.AppImage" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v7
+        with:
+          path: /work/out/${{ steps.build.outputs.file }}
+          archive: false
+          if-no-files-found: error
+
+  publish:
+    needs: build
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          name: ${{ needs.build.outputs.file }}
+      - name: Replace the continuous release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          FILE: ${{ needs.build.outputs.file }}
+        run: |
+          gh release delete continuous --cleanup-tag --yes || true
+          gh release create continuous "$FILE" --prerelease --target "$GITHUB_SHA" \
+            --title "Latest build from main" --notes "$(cat <<EOF
+          Built from $GITHUB_SHA by the [AppImage workflow]($GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID). Replaced on every push to main.
+
+          Runs on any x86_64 distro with glibc 2.35 or newer. GTK 3, WebKitGTK (webkit2gtk-4.1) and libsecret come from the system. After downloading:
+
+          \`\`\`sh
+          chmod +x $FILE
+          ./$FILE
+          \`\`\`
+          EOF
+          )"
