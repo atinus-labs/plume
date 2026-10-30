@@ -32,6 +32,7 @@ class BodyEditor extends StatelessWidget {
     required this.focusNode,
     required this.scrollController,
     required this.onEditLink,
+    required this.onEscape,
     this.minHeight,
   });
 
@@ -41,6 +42,9 @@ class BodyEditor extends StatelessWidget {
   /// Unused while the body scrolls with the rest of the form, but required.
   final ScrollController scrollController;
   final VoidCallback onEditLink;
+
+  /// Esc, which the editor keeps from the shortcuts around it.
+  final VoidCallback onEscape;
   final double? minHeight;
 
   /// Space before a list item's text, and the further step of each nested
@@ -91,6 +95,12 @@ class BodyEditor extends StatelessWidget {
   /// Tab nests list items and Shift+Tab lifts them, as in Gmail. Elsewhere
   /// the keys move between controls.
   KeyEventResult? _onKey(KeyEvent event, Node? node) {
+    // Quill would spend Esc on hiding its selection menu, even with none
+    // showing, and its own binding outranks any given in customShortcuts.
+    if (const SingleActivator(LogicalKeyboardKey.escape).accepts(event, HardwareKeyboard.instance)) {
+      onEscape();
+      return KeyEventResult.handled;
+    }
     if (event.logicalKey != LogicalKeyboardKey.tab || event is KeyUpEvent) return null;
     final keyboard = HardwareKeyboard.instance;
     if (keyboard.isControlPressed || keyboard.isAltPressed || keyboard.isMetaPressed) return null;

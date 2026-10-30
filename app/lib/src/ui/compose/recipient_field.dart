@@ -16,14 +16,12 @@ class RecipientField extends ConsumerStatefulWidget {
     required this.recipients,
     required this.onChanged,
     this.trailing,
-    this.autofocus = false,
   });
 
   final String label;
   final List<Address> recipients;
   final ValueChanged<List<Address>> onChanged;
   final Widget? trailing;
-  final bool autofocus;
 
   @override
   ConsumerState<RecipientField> createState() => RecipientFieldState();
@@ -134,7 +132,6 @@ class RecipientFieldState extends ConsumerState<RecipientField> {
       fieldViewBuilder: (context, controller, focus, onSubmit) => TextField(
           controller: controller,
           focusNode: focus,
-          autofocus: widget.autofocus,
           style: theme.textTheme.bodyLarge,
           decoration: const InputDecoration(
             filled: false,

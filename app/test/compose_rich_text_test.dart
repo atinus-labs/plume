@@ -355,6 +355,7 @@ void main() {
               focusNode: FocusNode(),
               scrollController: ScrollController(),
               onEditLink: () {},
+              onEscape: () {},
             ),
           ),
         ),

@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_quill/flutter_quill.dart' show QuillEditor;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:plume/src/state/mail.dart';
+import 'package:plume/src/ui/actions.dart';
 import 'package:plume/src/ui/compose/compose_host.dart';
 import 'package:plume/src/ui/compose/compose_panel.dart';
 import 'package:plume/src/ui/compose/recipient_field.dart';
@@ -51,4 +53,44 @@ void main() {
       expect(focusedIn(find.byType(ComposePanel)), isTrue);
     });
   }
+
+  testWidgets('a new message starts in To, and Esc closes it straight away', (t) async {
+    final app = await DemoApp.start(t);
+    app.ref.read(composeProvider.notifier).newMessage();
+    await app.settle();
+    expect(focusedIn(find.byType(RecipientField).first), isTrue);
+
+    await t.sendKeyEvent(LogicalKeyboardKey.escape);
+    await app.settle();
+    expect(find.byType(ComposePanel), findsNothing);
+  });
+
+  testWidgets('Esc in the message closes the window, keeping the draft', (t) async {
+    final app = await DemoApp.start(t);
+    app.ref.read(composeProvider.notifier).newMessage();
+    await app.settle();
+    await t.enterText(find.widgetWithText(TextField, 'Subject'), 'Lunch');
+    await t.sendKeyEvent(LogicalKeyboardKey.tab);
+    await t.pump();
+    expect(bodyFocused(t), isTrue);
+
+    await t.sendKeyEvent(LogicalKeyboardKey.escape);
+    await app.settle();
+    expect(find.byType(ComposePanel), findsNothing);
+    expect(find.text('Draft saved'), findsOneWidget);
+  });
+
+  testWidgets('a reply starts in the message, and Esc closes it', (t) async {
+    final app = await DemoApp.start(t);
+    openThread(app.ref, app.ref.read(visibleThreadsProvider).value!.first);
+    await app.settle();
+    await t.sendKeyEvent(LogicalKeyboardKey.keyR);
+    await app.settle();
+    expect(find.byType(ComposePanel), findsOneWidget);
+    expect(bodyFocused(t), isTrue);
+
+    await t.sendKeyEvent(LogicalKeyboardKey.escape);
+    await app.settle();
+    expect(find.byType(ComposePanel), findsNothing);
+  });
 }

@@ -123,11 +123,15 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
     if (widget.request.attachmentsFrom != null) {
       _attachmentsLoaded = _loadAttachments();
     }
-    if (!_startInTo) {
-      WidgetsBinding.instance.addPostFrameCallback(
-        (_) => _bodyFocus.requestFocus(),
-      );
-    }
+    // Asked for outright: autofocus gives way to the shell, which holds focus
+    // for the mail shortcuts.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (_startInTo) {
+        _toKey.currentState?.focus();
+      } else {
+        _bodyFocus.requestFocus();
+      }
+    });
   }
 
   @override
@@ -613,7 +617,6 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
           key: _toKey,
           label: 'To',
           recipients: _to,
-          autofocus: _startInTo,
           onChanged: (v) {
             setState(() => _to = v);
             _scheduleSave();
@@ -687,6 +690,7 @@ class _ComposePanelState extends ConsumerState<ComposePanel> {
                     focusNode: _bodyFocus,
                     scrollController: _bodyScroll,
                     onEditLink: () => unawaited(_editLink()),
+                    onEscape: () => unawaited(_closeKeepingDraft()),
                     minHeight: 8 * (theme.textTheme.bodyLarge?.fontSize ?? 16) * 1.5,
                   ),
                 if (_quotedText != null) ...[
